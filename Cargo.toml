@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 logos = "0.14"
 thiserror = "1.0"
+inkwell = { version = "0.4", features = ["llvm15-0"] }
