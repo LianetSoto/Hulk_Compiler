@@ -7,3 +7,7 @@ edition = "2024"
 logos = "0.14"
 thiserror = "1.0"
 inkwell = { version = "0.4", features = ["llvm15-0"] }
+lalrpop-util = { version = "0.23.0", features = ["lexer"] }
+
+[build-dependencies]
+lalrpop = "0.23.0"

@@ -1,0 +1,81 @@
+// src/grammar.lalrpop
+use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program};
+use crate::lexer::Token;
+use crate::error::CompilerError;
+
+grammar;
+
+extern {
+    type Location = usize;
+    type Error = CompilerError;
+
+    enum Token {
+        "number" => Token::Number(<f64>),
+        "+"      => Token::Plus,
+        "-"      => Token::Minus,
+        "*"      => Token::Mult,
+        "/"      => Token::Div,
+        "^"      => Token::Power,
+        "("      => Token::LParen,
+        ")"      => Token::RParen,
+        ";"      => Token::Semicolon,
+        "print"  => Token::Print,
+    }
+}
+
+// Programa: lista de sentencias
+pub Program: Box<Program> = {
+    <stmts:Stmt*> => Box::new(Program { statements: stmts })
+};
+
+// Sentencia: por ahora solo expresión seguida de punto y coma
+// El tipo es Stmt (sin Box, porque Program.statements es Vec<Stmt>)
+Stmt: Stmt = {
+    <e:Expr> ";" => Stmt::Expr(ExprStmt { expr: e })   // e ya es Box<Expr>
+};
+
+// Expresión con precedencia (el tipo siempre es Box<Expr>)
+Expr: Box<Expr> = {
+    <l:Expr> "+" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Add,
+        right: r,
+    })),
+    <l:Expr> "-" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Sub,
+        right: r,
+    })),
+    Term,
+};
+
+Term: Box<Expr> = {
+    <l:Term> "*" <r:Power> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Mul,
+        right: r,
+    })),
+    <l:Term> "/" <r:Power> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Div,
+        right: r,
+    })),
+    Power,
+};
+
+Power: Box<Expr> = {
+    <l:Power> "^" <r:Atom> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Pow,
+        right: r,
+    })),
+    Atom,
+};
+
+Atom: Box<Expr> = {
+    "(" <e:Expr> ")" => e,   // e ya es Box<Expr>
+
+    <n:"number"> => Box::new(Expr::Number(NumberExpr { value: n })),
+
+    "print" "(" <e:Expr> ")" => Box::new(Expr::Print(PrintExpr { argument: e })),
+};
