@@ -6,7 +6,8 @@ pub enum Expr {
     Number(NumberExpr),
     BinaryOp(BinaryOpExpr),
     Print(PrintExpr),
-    // Futuras: Variable(VariableExpr), Call(CallExpr), ...
+    Call(CallExpr),
+    Const(ConstExpr),
 }
 
 impl Node for Expr {
@@ -33,7 +34,7 @@ impl Node for NumberExpr {
 // OPERADORES BINARIOS
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Pow,
+    Add, Sub, Mul, Div, Pow, Concat
 }
 
 // BINARY OP EXPR (operación binaria)
@@ -60,4 +61,38 @@ impl Node for PrintExpr {
     fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result {
         visitor.visit_print(self)
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StringExpr {
+    pub value: String,
+}
+
+impl Node for StringExpr { 
+    fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
+        v.visit_string(self) 
+    } 
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallExpr {
+    pub func: String,
+    pub args: Vec<Box<Expr>>,
+}
+
+impl Node for CallExpr { 
+    fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
+        v.visit_call(self) 
+    } 
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstExpr {
+    pub name: String,
+}
+
+impl Node for ConstExpr { 
+    fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
+        v.visit_const(self) 
+    } 
 }
