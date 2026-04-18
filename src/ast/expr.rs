@@ -6,6 +6,7 @@ pub enum Expr {
     Number(NumberExpr),
     BinaryOp(BinaryOpExpr),
     Print(PrintExpr),
+    String(StringExpr),
     Call(CallExpr),
     Const(ConstExpr),
 }
@@ -16,6 +17,9 @@ impl Node for Expr {
             Expr::Number(n) => n.accept(visitor),
             Expr::BinaryOp(b) => b.accept(visitor),
             Expr::Print(p) => p.accept(visitor),
+            Expr::Call(call_expr) => call_expr.accept(visitor),
+            Expr::Const(const_expr) => const_expr.accept(visitor),
+            Expr::String(string_expr) => string_expr.accept(visitor),
         }
     }
 }

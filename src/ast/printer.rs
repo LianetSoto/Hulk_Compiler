@@ -1,4 +1,4 @@
-use crate::ast::{Node, Visitor, Program, ExprStmt, NumberExpr, BinaryOpExpr, PrintExpr};
+use crate::ast::{BinaryOpExpr, ExprStmt, Node, NumberExpr, PrintExpr, Program, Visitor, StringExpr, CallExpr, ConstExpr};
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -69,5 +69,29 @@ impl Visitor for PrettyPrinter {
         p.argument.accept(self);
         self.indent -= 1;
         self.write_line("}");
+    }
+    
+    fn visit_string(&mut self, expr: &StringExpr) -> Self::Result {
+        self.write_line(&format!("String({:?})", expr.value));
+    }
+
+    fn visit_call(&mut self, expr: &CallExpr) -> Self::Result {
+        self.write_line(&format!("Call({}, args: [", expr.func));
+        self.indent += 1;
+        for (i, arg) in expr.args.iter().enumerate() {
+            if i > 0 {
+                self.write_line(",");
+            }
+            arg.accept(self);
+        }
+        if !expr.args.is_empty() {
+            self.write_line("");
+        }
+        self.indent -= 1;
+        self.write_line("])");
+    }
+
+    fn visit_const(&mut self, expr: &ConstExpr) -> Self::Result {
+        self.write_line(&format!("Const({})", expr.name));
     }
 }
