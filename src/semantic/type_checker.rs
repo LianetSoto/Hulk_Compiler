@@ -88,7 +88,7 @@ impl Visitor for TypeChecker {
 
     fn visit_call(&mut self, expr: &CallExpr) -> HulkType {
         match expr.func.as_str() {
-            "sin" | "cos" | "sqrt" => {
+            "sin" | "cos" | "sqrt" | "exp" => {
                 if expr.args.len() != 1 {
                     self.add_error("Function takes 1 argument".to_string());
                 } else {
@@ -102,6 +102,19 @@ impl Visitor for TypeChecker {
             "rand" => {
                 if !expr.args.is_empty() {
                     self.add_error("rand takes 0 arguments".to_string());
+                }
+                HulkType::Number
+            }
+            "log" => {
+                if expr.args.len() != 2 {
+                    self.add_error("log expects 2 arguments (base, value)".to_string());
+                } else {
+                    let base_ty = expr.args[0].accept(self);
+                    let val_ty = expr.args[1].accept(self);
+                    if !base_ty.is_compatible_with(&HulkType::Number) ||
+                    !val_ty.is_compatible_with(&HulkType::Number) {
+                        self.add_error("log arguments must be Number".to_string());
+                    }
                 }
                 HulkType::Number
             }

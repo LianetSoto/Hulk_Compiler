@@ -57,6 +57,8 @@ pub enum Token {
     #[token("cos")]  Cos,
     #[token("sqrt")] Sqrt,
     #[token("rand")] Rand,
+    #[token("exp")] Exp,
+    #[token("log")] Log,
 
     // Regular expression patterns
     #[regex(r"[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
@@ -132,6 +134,8 @@ impl fmt::Display for Token {
             Token::Cos => write!(f, "cos"),
             Token::Sqrt => write!(f, "sqrt"),
             Token::Rand => write!(f, "rand"),
+            Token::Log => write!(f,"log"),
+            Token::Exp => write!(f,"exp"),
             Token::Number(v) => write!(f, "{}", v),
             Token::String(s) => write!(f, "\"{}\"", s),
         }

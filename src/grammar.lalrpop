@@ -19,6 +19,7 @@ extern {
         "("      => Token::LParen,
         ")"      => Token::RParen,
         ";"      => Token::Semicolon,
+        ","      => Token::Comma,
         "print"  => Token::Print,
         "string" => Token::String(<String>),
         "@" => Token::Concat,
@@ -28,6 +29,8 @@ extern {
         "rand" => Token::Rand,
         "PI" => Token::Pi,
         "E" => Token::E,
+        "exp" => Token::Exp,
+        "log" => Token::Log,
     }
 }
 
@@ -102,4 +105,9 @@ Atom: Box<Expr> = {
     "sqrt" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sqrt".to_string(), args: vec![arg] })),
 
     "rand" "(" ")" => Box::new(Expr::Call(CallExpr { func: "rand".to_string(), args: vec![] })),
+
+    "exp" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "exp".to_string(), args: vec![arg] })),
+
+    // log(base, value)
+    "log" "(" <base:Expr> "," <val:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "log".to_string(), args: vec![base, val] })),
 };
