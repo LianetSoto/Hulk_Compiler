@@ -115,6 +115,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     .ok_or("Failed to convert pow call to basic value")?;
                 Ok(result)
             }
+            BinOp::Concat => todo!(),
         }
     }
 
@@ -129,6 +130,18 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             .map_err(|e| e.to_string())?;
 
         Ok(value.into())
+    }
+    
+    fn visit_string(&mut self, expr: &crate::ast::StringExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_call(&mut self, expr: &crate::ast::CallExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_const(&mut self, expr: &crate::ast::ConstExpr) -> Self::Result {
+        todo!()
     }
 }
 

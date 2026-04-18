@@ -86,10 +86,6 @@ pub enum Token {
         result
     })]
     String(String),
-
-    // Identificadores
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
-    Identifier(String),
 }
 
 // Implementación de Display para errores bonitos

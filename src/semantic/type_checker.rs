@@ -76,4 +76,39 @@ impl Visitor for TypeChecker {
         // Por simplicidad, decimos que devuelve Number.
         HulkType::Number
     }
+
+    fn visit_string(&mut self, _expr: &StringExpr) -> HulkType {
+        HulkType::String
+    }
+
+    fn visit_const(&mut self, expr: &ConstExpr) -> HulkType {
+        // PI y E son números
+        HulkType::Number
+    }
+
+    fn visit_call(&mut self, expr: &CallExpr) -> HulkType {
+        match expr.func.as_str() {
+            "sin" | "cos" | "sqrt" => {
+                if expr.args.len() != 1 {
+                    self.add_error("Function takes 1 argument".to_string());
+                } else {
+                    let arg_ty = expr.args[0].accept(self);
+                    if !arg_ty.is_compatible_with(&HulkType::Number) {
+                        self.add_error("Argument must be Number".to_string());
+                    }
+                }
+                HulkType::Number
+            }
+            "rand" => {
+                if !expr.args.is_empty() {
+                    self.add_error("rand takes 0 arguments".to_string());
+                }
+                HulkType::Number
+            }
+            _ => {
+                self.add_error(format!("Unknown function '{}'", expr.func));
+                HulkType::Error
+            }
+        }
+    }
 }
