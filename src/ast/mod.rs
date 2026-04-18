@@ -11,6 +11,6 @@ pub mod printer;
 pub use node::Node;
 pub use program::Program;
 pub use stmt::{ExprStmt, Stmt};
-pub use expr::{BinOp, BinaryOpExpr, Expr, NumberExpr, PrintExpr};
+pub use expr::{BinOp, BinaryOpExpr, Expr, NumberExpr, PrintExpr, StringExpr, CallExpr, ConstExpr};
 pub use visitor::Visitor;
 pub use printer::PrettyPrinter;

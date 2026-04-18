@@ -1,5 +1,5 @@
 // src/grammar.lalrpop
-use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program};
+use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr};
 use crate::lexer::Token;
 use crate::error::CompilerError;
 
@@ -20,6 +20,14 @@ extern {
         ")"      => Token::RParen,
         ";"      => Token::Semicolon,
         "print"  => Token::Print,
+        "string" => Token::String(<String>),
+        "@" => Token::Concat,
+        "sin" => Token::Sin,
+        "cos" => Token::Cos,
+        "sqrt" => Token::Sqrt,
+        "rand" => Token::Rand,
+        "PI" => Token::Pi,
+        "E" => Token::E,
     }
 }
 
@@ -44,6 +52,11 @@ Expr: Box<Expr> = {
     <l:Expr> "-" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Sub,
+        right: r,
+    })),
+    <l:Expr> "@" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Concat,
         right: r,
     })),
     Term,
@@ -78,4 +91,15 @@ Atom: Box<Expr> = {
     <n:"number"> => Box::new(Expr::Number(NumberExpr { value: n })),
 
     "print" "(" <e:Expr> ")" => Box::new(Expr::Print(PrintExpr { argument: e })),
+
+    <s:"string"> => Box::new(Expr::String(StringExpr { value: s })),
+
+    "PI" => Box::new(Expr::Const(ConstExpr { name: "PI".to_string() })),
+    "E"  => Box::new(Expr::Const(ConstExpr { name: "E".to_string() })),
+
+    "sin" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sin".to_string(), args: vec![arg] })),
+    "cos" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "cos".to_string(), args: vec![arg] })),
+    "sqrt" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sqrt".to_string(), args: vec![arg] })),
+
+    "rand" "(" ")" => Box::new(Expr::Call(CallExpr { func: "rand".to_string(), args: vec![] })),
 };

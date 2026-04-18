@@ -48,10 +48,44 @@ pub enum Token {
     #[token("|")]  Or,
     #[token("!")]  Not,
 
+    // Constantes matemáticas
+    #[token("PI")] Pi,
+    #[token("E")]  E,
+
+    // Funciones matemáticas built‑in
+    #[token("sin")]  Sin,
+    #[token("cos")]  Cos,
+    #[token("sqrt")] Sqrt,
+    #[token("rand")] Rand,
+
     // Regular expression patterns
     #[regex(r"[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
     Number(f64),
 
+    // Cadenas con escapes básicos
+    #[regex(r#""([^"\\]|\\.)*""#, |lex| {
+        let s = lex.slice();
+        // Quitar las comillas dobles del principio y final
+        let inner = &s[1..s.len()-1];
+        let mut result = String::new();
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    Some(c) => result.push(c),
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    })]
+    String(String),
 }
 
 // Implementación de Display para errores bonitos
@@ -92,7 +126,14 @@ impl fmt::Display for Token {
             Token::And => write!(f, "&"),
             Token::Or => write!(f, "|"),
             Token::Not => write!(f, "!"),
+            Token::Pi => write!(f, "PI"),
+            Token::E  => write!(f, "E"),
+            Token::Sin => write!(f, "sin"),
+            Token::Cos => write!(f, "cos"),
+            Token::Sqrt => write!(f, "sqrt"),
+            Token::Rand => write!(f, "rand"),
             Token::Number(v) => write!(f, "{}", v),
+            Token::String(s) => write!(f, "\"{}\"", s),
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::ast::{Program, ExprStmt, NumberExpr, BinaryOpExpr, PrintExpr};
+use crate::ast::{Program, ExprStmt, NumberExpr, BinaryOpExpr, PrintExpr, StringExpr, CallExpr, ConstExpr};
 
 pub trait Visitor {
     
@@ -10,4 +10,7 @@ pub trait Visitor {
     fn visit_number(&mut self, expr: &NumberExpr) -> Self::Result;
     fn visit_binary_op(&mut self, expr: &BinaryOpExpr) -> Self::Result;
     fn visit_print(&mut self, expr: &PrintExpr) -> Self::Result;
+    fn visit_string(&mut self, expr: &StringExpr) -> Self::Result;
+    fn visit_call(&mut self, expr: &CallExpr) -> Self::Result;
+    fn visit_const(&mut self, expr: &ConstExpr) -> Self::Result;
 }
