@@ -1,38 +1,33 @@
 mod lexer;
-mod ast;
-mod error;
 mod parser;
-mod semantic;  // <-- agregar
+mod ast;
+mod semantic;
+mod codegen;
+mod error;
+mod compiler;
 
-use parser::parse_program;
-use ast::PrettyPrinter;
-use ast::node::Node;
-use semantic::type_checker::TypeChecker;
+use compiler::compile;
+use std::env;
+use std::fs;
+use std::process;
 
 fn main() {
-    let codigo = r#"
-        print(42 + a);
-    "#;
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Uso: {} <archivo.hulk>", args[0]);
+        process::exit(1);
+    }
+    let filename = &args[1];
+    let source_code = fs::read_to_string(filename).unwrap_or_else(|err| {
+        eprintln!("Error leyendo '{}': {}", filename, err);
+        process::exit(1);
+    });
 
-    match parse_program(codigo) {
-        Ok(program) => {
-            // 1. Pretty print del AST
-            let mut printer = PrettyPrinter::new();
-            program.accept(&mut printer);
-            println!("AST:\n{}", printer.into_string());
-
-            // 2. Análisis semántico
-            let mut checker = TypeChecker::new();
-            match checker.check(&program) {
-                Ok(()) => println!("✅ Semantic analysis passed!"),
-                Err(errors) => {
-                    eprintln!("❌ Semantic errors:");
-                    for err in errors {
-                        eprintln!("  {}", err);
-                    }
-                }
-            }
+    match compile(&source_code, "output.ll", true) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("Error de compilación: {}", e);
+            process::exit(1);
         }
-        Err(e) => eprintln!("Parsing error: {}", e),
     }
 }
