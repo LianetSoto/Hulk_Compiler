@@ -1,4 +1,5 @@
 use crate::ast::{Node, Visitor};
+use crate::error::Span;
 
 // ENUM PRINCIPAL DE EXPRESIONES
 #[derive(Debug, Clone, PartialEq)]
@@ -11,6 +12,21 @@ pub enum Expr {
     Const(ConstExpr),
     Bool(BoolExpr),
     UnaryOp(UnaryOpExpr)
+}
+
+impl Expr {
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Number(n) => n.span,
+            Expr::BinaryOp(b) => b.span,
+            Expr::Print(p) => p.span,
+            Expr::String(s) => s.span,
+            Expr::Bool(b) => b.span,
+            Expr::Const(c) => c.span,
+            Expr::Call(c) => c.span,
+            Expr::UnaryOp(u) => u.span,
+        }
+    }
 }
 
 impl Node for Expr {
@@ -31,6 +47,7 @@ impl Node for Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumberExpr {
     pub value: f64,
+    pub span: Span,
 }
 
 impl Node for NumberExpr {
@@ -53,6 +70,7 @@ pub struct BinaryOpExpr {
     pub left: Box<Expr>,
     pub op: BinOp,
     pub right: Box<Expr>,
+    pub span: Span,
 }
 
 impl Node for BinaryOpExpr {
@@ -65,6 +83,7 @@ impl Node for BinaryOpExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrintExpr {
     pub argument: Box<Expr>,
+    pub span: Span,
 }
 
 impl Node for PrintExpr {
@@ -76,6 +95,7 @@ impl Node for PrintExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringExpr {
     pub value: String,
+    pub span: Span,
 }
 
 impl Node for StringExpr { 
@@ -88,6 +108,7 @@ impl Node for StringExpr {
 pub struct CallExpr {
     pub func: String,
     pub args: Vec<Box<Expr>>,
+    pub span: Span,
 }
 
 impl Node for CallExpr { 
@@ -99,6 +120,7 @@ impl Node for CallExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstExpr {
     pub name: String,
+    pub span: Span,
 }
 
 impl Node for ConstExpr { 
@@ -110,6 +132,7 @@ impl Node for ConstExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoolExpr {
     pub value: bool,
+    pub span: Span,
 }
 impl Node for BoolExpr { 
     fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
@@ -121,6 +144,7 @@ impl Node for BoolExpr {
 pub struct UnaryOpExpr {
     pub op: UnaryOp,
     pub expr: Box<Expr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

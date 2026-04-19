@@ -1,9 +1,8 @@
-// src/semantic/type_checker.rs
-
 use crate::ast::expr::UnaryOp;
 use crate::ast::*;
 use crate::error::CompilerError;
 use super::types::HulkType;
+use crate::error::Span;
 
 pub struct TypeChecker {
     errors: Vec<CompilerError>,
@@ -26,9 +25,8 @@ impl TypeChecker {
         }
     }
 
-    fn add_error(&mut self, msg: String) {
-        // TODO: agregar ubicación (línea/columna) cuando tengamos spans en el AST
-        self.errors.push(CompilerError::ParserError { msg });
+    fn add_type_error(&mut self, msg: String, span: Span) {
+        self.errors.push(CompilerError::TypeError { msg, span });
     }
 }
 
@@ -61,10 +59,16 @@ impl Visitor for TypeChecker {
             // Operadores aritméticos (Number)
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow => {
                 if !left_type.is_compatible_with(&HulkType::Number) {
-                    self.add_error("Left operand of arithmetic operator must be Number".to_string());
+                    self.add_type_error(
+                        "Left operand of arithmetic operator must be Number".to_string(),
+                        expr.left.span()
+                    );
                 }
                 if !right_type.is_compatible_with(&HulkType::Number) {
-                    self.add_error("Right operand of arithmetic operator must be Number".to_string());
+                    self.add_type_error(
+                        "Right operand of arithmetic operator must be Number".to_string(),
+                        expr.right.span()
+                    );
                 }
                 HulkType::Number
             }
@@ -76,10 +80,15 @@ impl Visitor for TypeChecker {
                 let right_ok = right_type.is_compatible_with(&HulkType::String) ||
                             right_type.is_compatible_with(&HulkType::Number);
                 if !left_ok {
-                    self.add_error("Left operand of @ must be String or Number".to_string());
+                    self.add_type_error(
+                        "Left operand of @ must be String or Number".to_string(),
+                        expr.left.span()
+                    );
                 }
                 if !right_ok {
-                    self.add_error("Right operand of @ must be String or Number".to_string());
+                    self.add_type_error("Right operand of @ must be String or Number".to_string(),
+                    expr.right.span()
+                );
                 }
                 HulkType::String
             }
@@ -87,10 +96,14 @@ impl Visitor for TypeChecker {
             // Operadores relacionales (devuelven Boolean)
             BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
                 if !left_type.is_compatible_with(&HulkType::Number) {
-                    self.add_error("Left operand of comparison must be Number".to_string());
+                    self.add_type_error("Left operand of comparison must be Number".to_string(),
+                    expr.left.span()
+                );
                 }
                 if !right_type.is_compatible_with(&HulkType::Number) {
-                    self.add_error("Right operand of comparison must be Number".to_string());
+                    self.add_type_error("Right operand of comparison must be Number".to_string(),
+                    expr.right.span()
+                );
                 }
                 HulkType::Boolean
             }
@@ -98,10 +111,14 @@ impl Visitor for TypeChecker {
             // Operadores lógicos (devuelven Boolean)
             BinOp::And | BinOp::Or => {
                 if !left_type.is_compatible_with(&HulkType::Boolean) {
-                    self.add_error("Left operand of logical operator must be Boolean".to_string());
+                    self.add_type_error("Left operand of logical operator must be Boolean".to_string(),
+                    expr.left.span()
+                );
                 }
                 if !right_type.is_compatible_with(&HulkType::Boolean) {
-                    self.add_error("Right operand of logical operator must be Boolean".to_string());
+                    self.add_type_error("Right operand of logical operator must be Boolean".to_string(),
+                    expr.right.span()
+                );
                 }
                 HulkType::Boolean
             }
@@ -109,13 +126,15 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_print(&mut self, expr: &PrintExpr) -> HulkType {
-    let arg_type = expr.argument.accept(self);
-    if !arg_type.is_compatible_with(&HulkType::Number) &&
-       !arg_type.is_compatible_with(&HulkType::String) && !arg_type.is_compatible_with(&HulkType::Boolean){
-        self.add_error("print argument must be Number, String or Boolean".to_string());
+        let arg_type = expr.argument.accept(self);
+        if !arg_type.is_compatible_with(&HulkType::Number) &&
+        !arg_type.is_compatible_with(&HulkType::String) && !arg_type.is_compatible_with(&HulkType::Boolean){
+            self.add_type_error("print argument must be Number, String or Boolean".to_string(),
+            expr.argument.span()  
+        );
+        }
+        HulkType::Number  // print devuelve Number (o podría ser Void)
     }
-    HulkType::Number  // print devuelve Number (o podría ser Void)
-}
 
     fn visit_string(&mut self, _expr: &StringExpr) -> HulkType {
         HulkType::String
@@ -130,36 +149,52 @@ impl Visitor for TypeChecker {
         match expr.func.as_str() {
             "sin" | "cos" | "sqrt" | "exp" => {
                 if expr.args.len() != 1 {
-                    self.add_error("Function takes 1 argument".to_string());
+                    self.add_type_error("Function takes 1 argument".to_string(),
+                    expr.span  
+                );
                 } else {
                     let arg_ty = expr.args[0].accept(self);
                     if !arg_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_error("Argument must be Number".to_string());
+                        self.add_type_error("Argument must be Number".to_string(),
+                        expr.args[0].span() 
+                    );
                     }
                 }
                 HulkType::Number
             }
             "rand" => {
                 if !expr.args.is_empty() {
-                    self.add_error("rand takes 0 arguments".to_string());
+                    self.add_type_error("rand takes 0 arguments".to_string(),
+                    expr.span  
+                );
                 }
                 HulkType::Number
             }
             "log" => {
                 if expr.args.len() != 2 {
-                    self.add_error("log expects 2 arguments (base, value)".to_string());
+                    self.add_type_error("log expects 2 arguments (base, value)".to_string(),
+                    expr.span 
+                );
                 } else {
                     let base_ty = expr.args[0].accept(self);
                     let val_ty = expr.args[1].accept(self);
-                    if !base_ty.is_compatible_with(&HulkType::Number) ||
-                    !val_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_error("log arguments must be Number".to_string());
+                    if !base_ty.is_compatible_with(&HulkType::Number){
+                        self.add_type_error("log base must be Number".to_string(),
+                        expr.args[0].span()
+                    ); 
+                    }
+                    if !val_ty.is_compatible_with(&HulkType::Number) {
+                        self.add_type_error("log value must be Number".to_string(),
+                        expr.args[1].span()
+                    );
                     }
                 }
                 HulkType::Number
             }
             _ => {
-                self.add_error(format!("Unknown function '{}'", expr.func));
+                self.add_type_error(format!("Unknown function '{}'", expr.func),
+                expr.span 
+            );
                 HulkType::Error
             }
         }
@@ -173,7 +208,9 @@ impl Visitor for TypeChecker {
         match expr.op {
             UnaryOp::Not => {
                 if !operand_ty.is_compatible_with(&HulkType::Boolean) {
-                    self.add_error("Negation (!) requires Boolean operand".to_string());
+                    self.add_type_error("Negation (!) requires Boolean operand".to_string(),
+                    expr.span 
+                );
                 }
                 HulkType::Boolean
             }

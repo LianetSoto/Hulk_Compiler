@@ -1,6 +1,5 @@
 use logos::Logos;
 use std::fmt;
-use crate::error::CompilerError;
 
 #[derive(Debug, Clone, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\f]+")]  // ignorar espacios, tabs, newlines y form feeds
@@ -144,43 +143,4 @@ impl fmt::Display for Token {
             Token::String(s) => write!(f, "\"{}\"", s),
         }
     }
-}
-
-// Lexer personalizado que implementa Iterator para LALRPOP
-pub struct Lexer<'input> {
-    inner: logos::Lexer<'input, Token>,
-}
-
-impl<'input> Lexer<'input> {
-    pub fn new(input: &'input str) -> Self {
-        Self {
-            inner: Token::lexer(input),
-        }
-    }
-}
-
-impl<'input> Iterator for Lexer<'input> {
-    type Item = Result<(usize, Token, usize), CompilerError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let token = self.inner.next()?;
-        let span = self.inner.span();
-        let start = span.start;
-        let end = span.end;
-        match token {
-            Ok(tok) => Some(Ok((start, tok, end))),
-            Err(()) => {
-                let slice = self.inner.slice();
-                let ch = slice.chars().next().unwrap_or('?');
-                Some(Err(CompilerError::UnexpectedCharacter { ch }))
-            }
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub fn tokenize(input: &str) -> Vec<Token> {
-    Token::lexer(input)
-        .filter_map(|result| result.ok())
-        .collect()
 }

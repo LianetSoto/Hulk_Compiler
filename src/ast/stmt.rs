@@ -1,4 +1,5 @@
 use crate::ast::{Node, Visitor, Expr};
+use crate::error::Span;
 
 // ENUM PRINCIPAL DE SENTENCIAS
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +22,7 @@ impl Node for Stmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExprStmt {
     pub expr: Box<Expr>,
+    pub span: Span,
 }
 
 impl Node for ExprStmt {
