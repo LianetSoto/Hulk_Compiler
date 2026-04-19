@@ -16,7 +16,20 @@ pub enum CompilerError {
     #[error("Undefined variable '{name}'")]
     UndefinedVariable { name: String, span: Span },
 
+    #[error("code generation error: {msg}")]
+    CodegenError { msg: String, span: Option<Span> },
+
+    #[error("I/O error: {0}")]
+    IoError(String), 
+
     // ... otros errores
+}
+
+// Implementación manual de From<std::io::Error> para CompilerError
+impl From<std::io::Error> for CompilerError {
+    fn from(err: std::io::Error) -> Self {
+        CompilerError::IoError(err.to_string())
+    }
 }
 
 impl CompilerError {
@@ -26,12 +39,14 @@ impl CompilerError {
             CompilerError::ParserError { span, .. } => *span,
             CompilerError::TypeError { span, .. } => Some(*span),
             CompilerError::UndefinedVariable { span, .. } => Some(*span),
+            CompilerError::CodegenError { span, ..} => *span,    
+            CompilerError::IoError(_) => None, 
             _ => None,
         }
     }
 }
 
-pub fn report_error(error: &CompilerError, source_map: &SourceMap, filename: &String) {
+pub fn report_error(error: &CompilerError, source_map: &SourceMap, filename: &str) {
     if let Some(span) = error.span() {
         let (start_line, start_col, end_line, end_col) = source_map.span_to_line_col(span);
 
