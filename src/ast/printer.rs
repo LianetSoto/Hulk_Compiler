@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOpExpr, ExprStmt, Node, NumberExpr, PrintExpr, Program, Visitor, StringExpr, CallExpr, ConstExpr};
+use crate::ast::{BinaryOpExpr, ExprStmt, Node, NumberExpr, PrintExpr, Program, Visitor, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr};
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -93,5 +93,19 @@ impl Visitor for PrettyPrinter {
 
     fn visit_const(&mut self, expr: &ConstExpr) -> Self::Result {
         self.write_line(&format!("Const({})", expr.name));
+        }
+        
+        fn visit_bool(&mut self, expr: &BoolExpr) -> Self::Result {
+        self.write_line(&format!("Bool({})", expr.value));
+    }
+
+    fn visit_unary_op(&mut self, expr: &UnaryOpExpr) -> Self::Result {
+        self.write_line(&format!("UnaryOp {{ op: {:?}", expr.op));
+        self.indent += 1;
+        self.write_line("expr:");
+        self.indent += 1;
+        expr.expr.accept(self);
+        self.indent -= 2;
+        self.write_line("}");
     }
 }

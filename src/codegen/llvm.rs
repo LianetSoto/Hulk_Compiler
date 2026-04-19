@@ -116,6 +116,14 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 Ok(result)
             }
             BinOp::Concat => todo!(),
+            BinOp::Eq => todo!(),
+            BinOp::Neq => todo!(),
+            BinOp::Lt => todo!(),
+            BinOp::Gt => todo!(),
+            BinOp::Leq => todo!(),
+            BinOp::Geq => todo!(),
+            BinOp::And => todo!(),
+            BinOp::Or => todo!(),
         }
     }
 
@@ -141,6 +149,14 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
     
     fn visit_const(&mut self, expr: &crate::ast::ConstExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_bool(&mut self, expr: &crate::ast::BoolExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_unary_op(&mut self, expr: &crate::ast::UnaryOpExpr) -> Self::Result {
         todo!()
     }
 }

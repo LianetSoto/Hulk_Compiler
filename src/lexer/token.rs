@@ -16,6 +16,8 @@ pub enum Token {
     #[token("elif")] Elif,
     #[token("while")] While,
     #[token("for")] For,
+    #[token("true")] True,
+    #[token("false")] False,
 
     // 
     #[token("(")]  LParen,
@@ -103,6 +105,8 @@ impl fmt::Display for Token {
             Token::Elif => write!(f, "elif"),
             Token::While => write!(f, "while"),
             Token::For => write!(f, "for"),
+            Token::True => write!(f, "true"),
+            Token::False => write!(f, "false"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBrace => write!(f, "{{"),
