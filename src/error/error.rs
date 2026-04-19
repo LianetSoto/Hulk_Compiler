@@ -9,6 +9,13 @@ pub enum CompilerError {
 
     #[error("Parser error: {msg}")]
     ParserError { msg: String, span: Option<Span> },
+
+    #[error("Type error: {msg}")]
+    TypeError { msg: String, span: Span },
+
+    #[error("Undefined variable '{name}'")]
+    UndefinedVariable { name: String, span: Span },
+
     // ... otros errores
 }
 
@@ -17,22 +24,21 @@ impl CompilerError {
         match self {
             CompilerError::UnexpectedCharacter { span, .. } => Some(*span),
             CompilerError::ParserError { span, .. } => *span,
-            // ... otros
+            CompilerError::TypeError { span, .. } => Some(*span),
+            CompilerError::UndefinedVariable { span, .. } => Some(*span),
             _ => None,
         }
     }
 }
 
-pub fn report_error(error: &CompilerError, source_map: &SourceMap) {
+pub fn report_error(error: &CompilerError, source_map: &SourceMap, filename: &String) {
     if let Some(span) = error.span() {
         let (start_line, start_col, end_line, end_col) = source_map.span_to_line_col(span);
 
         // Cabecera del error
         eprintln!("Error: {}", error);
-        eprintln!(
-            " --> {}:{}:{}",
-            start_line, start_col, end_col
-        );
+        eprintln!("--> {}:{}:{}", filename, start_line, start_col);
+        eprintln!("");
 
         // Mostrar la línea de código
         if let Some(line_str) = source_map.get_line(start_line) {

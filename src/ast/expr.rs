@@ -14,6 +14,21 @@ pub enum Expr {
     UnaryOp(UnaryOpExpr)
 }
 
+impl Expr {
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Number(n) => n.span,
+            Expr::BinaryOp(b) => b.span,
+            Expr::Print(p) => p.span,
+            Expr::String(s) => s.span,
+            Expr::Bool(b) => b.span,
+            Expr::Const(c) => c.span,
+            Expr::Call(c) => c.span,
+            Expr::UnaryOp(u) => u.span,
+        }
+    }
+}
+
 impl Node for Expr {
     fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result {
         match self {
