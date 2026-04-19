@@ -9,6 +9,8 @@ pub enum Expr {
     String(StringExpr),
     Call(CallExpr),
     Const(ConstExpr),
+    Bool(BoolExpr),
+    UnaryOp(UnaryOpExpr)
 }
 
 impl Node for Expr {
@@ -20,6 +22,8 @@ impl Node for Expr {
             Expr::Call(call_expr) => call_expr.accept(visitor),
             Expr::Const(const_expr) => const_expr.accept(visitor),
             Expr::String(string_expr) => string_expr.accept(visitor),
+            Expr::Bool(bool_expr) => bool_expr.accept(visitor),
+            Expr::UnaryOp(unary_op_expr) => unary_op_expr.accept(visitor),
         }
     }
 }
@@ -38,7 +42,9 @@ impl Node for NumberExpr {
 // OPERADORES BINARIOS
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Pow, Concat
+    Add, Sub, Mul, Div, Pow, Concat, 
+    Eq, Neq, Lt, Gt, Leq, Geq,
+    And, Or, 
 }
 
 // BINARY OP EXPR (operación binaria)
@@ -98,5 +104,31 @@ pub struct ConstExpr {
 impl Node for ConstExpr { 
     fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
         v.visit_const(self) 
+    } 
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoolExpr {
+    pub value: bool,
+}
+impl Node for BoolExpr { 
+    fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
+        v.visit_bool(self) 
+    } 
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnaryOpExpr {
+    pub op: UnaryOp,
+    pub expr: Box<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnaryOp {
+    Not,
+}
+impl Node for UnaryOpExpr{ 
+    fn accept<V: Visitor>(&self, v: &mut V) -> V::Result { 
+        v.visit_unary_op(self) 
     } 
 }
