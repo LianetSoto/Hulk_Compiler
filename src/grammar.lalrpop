@@ -1,5 +1,5 @@
 // src/grammar.lalrpop
-use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr};
+use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr,BoolExpr, UnaryOpExpr, UnaryOp};
 use crate::lexer::Token;
 use crate::error::CompilerError;
 
@@ -31,6 +31,17 @@ extern {
         "E" => Token::E,
         "exp" => Token::Exp,
         "log" => Token::Log,
+        "true"  => Token::True,
+        "false" => Token::False,
+        "&"  => Token::And,
+        "|"  => Token::Or,
+        "!"  => Token::Not,
+        "==" => Token::EqEq,
+        "!=" => Token::Neq,
+        "<"  => Token::Lt,
+        ">"  => Token::Gt,
+        "<=" => Token::Leq,
+        ">=" => Token::Geq,
     }
 }
 
@@ -40,74 +51,143 @@ pub Program: Box<Program> = {
 };
 
 // Sentencia: por ahora solo expresión seguida de punto y coma
-// El tipo es Stmt (sin Box, porque Program.statements es Vec<Stmt>)
 Stmt: Stmt = {
-    <e:Expr> ";" => Stmt::Expr(ExprStmt { expr: e })   // e ya es Box<Expr>
+    <e:Expr> ";" => Stmt::Expr(ExprStmt { expr: e })
 };
 
-// Expresión con precedencia (el tipo siempre es Box<Expr>)
+// Nivel más bajo: OR lógico (|)
 Expr: Box<Expr> = {
-    <l:Expr> "+" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <l:Expr> "|" <r:Logical> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Or,
+        right: r,
+    })),
+    Logical,
+};
+
+// Nivel: AND lógico (&)
+Logical: Box<Expr> = {
+    <l:Logical> "&" <r:Comparison> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::And,
+        right: r,
+    })),
+    Comparison,
+};
+
+// Nivel: comparaciones (==, !=, <, >, <=, >=)
+Comparison: Box<Expr> = {
+    <l:Comparison> "==" <r:AddExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Eq,
+        right: r,
+    })),
+    <l:Comparison> "!=" <r:AddExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Neq,
+        right: r,
+    })),
+    <l:Comparison> "<"  <r:AddExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Lt,
+        right: r,
+    })),
+    <l:Comparison> ">"  <r:AddExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Gt,
+        right: r,
+    })),
+    <l:Comparison> "<=" <r:AddExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Leq,
+        right: r,
+    })),
+    <l:Comparison> ">=" <r:AddExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Geq,
+        right: r,
+    })),
+    AddExpr,
+};
+
+// Nivel: sumas, restas y concatenación
+AddExpr: Box<Expr> = {
+    <l:AddExpr> "+" <r:MulExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Add,
         right: r,
     })),
-    <l:Expr> "-" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <l:AddExpr> "-" <r:MulExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Sub,
         right: r,
     })),
-    <l:Expr> "@" <r:Term> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <l:AddExpr> "@" <r:MulExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Concat,
         right: r,
     })),
-    Term,
+    MulExpr,
 };
 
-Term: Box<Expr> = {
-    <l:Term> "*" <r:Power> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+// Nivel: multiplicaciones y divisiones
+MulExpr: Box<Expr> = {
+    <l:MulExpr> "*" <r:PowerExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Mul,
         right: r,
     })),
-    <l:Term> "/" <r:Power> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <l:MulExpr> "/" <r:PowerExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Div,
         right: r,
     })),
-    Power,
+    PowerExpr,
 };
 
-Power: Box<Expr> = {
-    <l:Power> "^" <r:Atom> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+// Nivel: potencia (asociativa derecha)
+PowerExpr: Box<Expr> = {
+    <l:PowerExpr> "^" <r:UnaryExpr> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Pow,
         right: r,
     })),
+    UnaryExpr,
+};
+
+// Nivel: operadores unarios (solo ! por ahora)
+UnaryExpr: Box<Expr> = {
+    "!" <e:UnaryExpr> => Box::new(Expr::UnaryOp(UnaryOpExpr {
+        op: UnaryOp::Not,
+        expr: e,
+    })),
     Atom,
 };
 
+// Nivel atómico: números, strings, constantes, llamadas, paréntesis, booleanos
 Atom: Box<Expr> = {
-    "(" <e:Expr> ")" => e,   // e ya es Box<Expr>
+    "(" <e:Expr> ")" => e,
 
     <n:"number"> => Box::new(Expr::Number(NumberExpr { value: n })),
 
-    "print" "(" <e:Expr> ")" => Box::new(Expr::Print(PrintExpr { argument: e })),
-
     <s:"string"> => Box::new(Expr::String(StringExpr { value: s })),
+
+    "true"  => Box::new(Expr::Bool(BoolExpr { value: true })),
+    "false" => Box::new(Expr::Bool(BoolExpr { value: false })),
 
     "PI" => Box::new(Expr::Const(ConstExpr { name: "PI".to_string() })),
     "E"  => Box::new(Expr::Const(ConstExpr { name: "E".to_string() })),
 
-    "sin" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sin".to_string(), args: vec![arg] })),
-    "cos" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "cos".to_string(), args: vec![arg] })),
-    "sqrt" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sqrt".to_string(), args: vec![arg] })),
+    "print" "(" <e:Expr> ")" => Box::new(Expr::Print(PrintExpr { argument: e })),
 
+    "sin"  "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sin".to_string(), args: vec![arg] })),
+    "cos"  "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "cos".to_string(), args: vec![arg] })),
+    "sqrt" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "sqrt".to_string(), args: vec![arg] })),
+    "exp" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "exp".to_string(), args: vec![arg] })),
     "rand" "(" ")" => Box::new(Expr::Call(CallExpr { func: "rand".to_string(), args: vec![] })),
 
-    "exp" "(" <arg:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "exp".to_string(), args: vec![arg] })),
-
-    // log(base, value)
-    "log" "(" <base:Expr> "," <val:Expr> ")" => Box::new(Expr::Call(CallExpr { func: "log".to_string(), args: vec![base, val] })),
+    "log" "(" <base:Expr> "," <val:Expr> ")" => Box::new(Expr::Call(CallExpr {
+        func: "log".to_string(),
+        args: vec![base, val],
+    })),
 };
