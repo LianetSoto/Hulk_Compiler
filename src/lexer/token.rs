@@ -2,7 +2,7 @@ use logos::Logos;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Logos)]
-#[logos(skip r"[ \t\n\f]+")]  // ignorar espacios, tabs, newlines y form feeds
+#[logos(skip r"[ \t\n\f]+", skip r"//[^\n]*\n?")]
 pub enum Token {
 
     // Keywords
