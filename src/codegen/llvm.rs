@@ -424,6 +424,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(result.into())
             }
+            UnaryOp::Neg => todo!(),
         }
     }
     

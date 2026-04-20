@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOpExpr, ExprStmt, Node, NumberExpr, PrintExpr, Program, Visitor, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr};
+use crate::ast::{BinaryOpExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, Visitor};
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -100,12 +100,13 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
-        self.write_line(&format!("UnaryOp {{ op: {:?}", expr.op));
-        self.indent += 1;
-        self.write_line("expr:");
+        let op_name = match expr.op {
+            UnaryOp::Not => "!",
+            UnaryOp::Neg => "-",
+        };
+        self.write_line(&format!("UnaryOp({})", op_name));
         self.indent += 1;
         expr.expr.accept(self);
-        self.indent -= 2;
-        self.write_line("}");
-    }
+        self.indent -= 1;
+}
 }

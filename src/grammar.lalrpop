@@ -193,10 +193,16 @@ PowerExpr: Box<Expr> = {
     UnaryExpr,
 };
 
-// Nivel: operadores unarios (solo ! por ahora)
+// Nivel: operadores unarios ! and -
 UnaryExpr: Box<Expr> = {
     <start:@L> "!" <e:UnaryExpr> <end:@R> => Box::new(Expr::UnaryOp(UnaryOpExpr {
         op: UnaryOp::Not,
+        expr: e,
+        span: Span::new(start, end),
+        ty: None,
+    })),
+    <start:@L> "-" <e:UnaryExpr> <end:@R> => Box::new(Expr::UnaryOp(UnaryOpExpr {
+        op: UnaryOp::Neg,
         expr: e,
         span: Span::new(start, end),
         ty: None,
