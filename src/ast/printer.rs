@@ -26,17 +26,17 @@ impl PrettyPrinter {
 impl Visitor for PrettyPrinter {
     type Result = ();
 
-    fn visit_program(&mut self, p: &Program) {
+    fn visit_program(&mut self, p: &mut Program) {
         self.write_line("Program {");
         self.indent += 1;
-        for stmt in &p.statements {
+        for stmt in &mut p.statements {
             stmt.accept(self);
         }
         self.indent -= 1;
         self.write_line("}");
     }
 
-    fn visit_expr_stmt(&mut self, s: &ExprStmt) {
+    fn visit_expr_stmt(&mut self, s: &mut ExprStmt) {
         self.write_line("ExprStmt {");
         self.indent += 1;
         s.expr.accept(self);
@@ -44,11 +44,11 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_number(&mut self, n: &NumberExpr) {
+    fn visit_number(&mut self, n: &mut NumberExpr) {
         self.write_line(&format!("Number({})", n.value));
     }
 
-    fn visit_binary_op(&mut self, b: &BinaryOpExpr) {
+    fn visit_binary_op(&mut self, b: &mut BinaryOpExpr) {
         self.write_line(&format!("BinaryOp {{ op: {:?}", b.op));
         self.indent += 1;
         self.write_line("left:");
@@ -63,7 +63,7 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_print(&mut self, p: &PrintExpr) {
+    fn visit_print(&mut self, p: &mut PrintExpr) {
         self.write_line("Print {");
         self.indent += 1;
         p.argument.accept(self);
@@ -71,14 +71,14 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
     
-    fn visit_string(&mut self, expr: &StringExpr) -> Self::Result {
+    fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
         self.write_line(&format!("String({:?})", expr.value));
     }
 
-    fn visit_call(&mut self, expr: &CallExpr) -> Self::Result {
+    fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
         self.write_line(&format!("Call({}, args: [", expr.func));
         self.indent += 1;
-        for (i, arg) in expr.args.iter().enumerate() {
+        for (i, arg) in expr.args.iter_mut().enumerate() {
             if i > 0 {
                 self.write_line(",");
             }
@@ -91,15 +91,15 @@ impl Visitor for PrettyPrinter {
         self.write_line("])");
     }
 
-    fn visit_const(&mut self, expr: &ConstExpr) -> Self::Result {
+    fn visit_const(&mut self, expr: &mut ConstExpr) -> Self::Result {
         self.write_line(&format!("Const({})", expr.name));
         }
         
-        fn visit_bool(&mut self, expr: &BoolExpr) -> Self::Result {
+        fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
         self.write_line(&format!("Bool({})", expr.value));
     }
 
-    fn visit_unary_op(&mut self, expr: &UnaryOpExpr) -> Self::Result {
+    fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
         self.write_line(&format!("UnaryOp {{ op: {:?}", expr.op));
         self.indent += 1;
         self.write_line("expr:");
