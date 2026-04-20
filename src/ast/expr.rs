@@ -172,6 +172,7 @@ pub struct UnaryOpExpr {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOp {
     Not,
+    Neg
 }
 impl Node for UnaryOpExpr{ 
     fn accept<V: Visitor>(&mut self, v: &mut V) -> V::Result { 

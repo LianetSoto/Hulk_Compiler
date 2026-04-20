@@ -250,6 +250,15 @@ impl Visitor for TypeChecker {
                 }
                 HulkType::Boolean
             }
+            UnaryOp::Neg => {
+                if !operand_ty.is_compatible_with(&HulkType::Number) {
+                    self.add_type_error(
+                        "Unary negation (-) requires Number operand".to_string(),
+                        expr.span
+                    );
+                }
+                HulkType::Number
+            }
         };
         expr.ty = Some(result_ty.clone());
         result_ty
