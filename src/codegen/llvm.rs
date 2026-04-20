@@ -60,6 +60,103 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             .as_pointer_value()
     }
 
+    fn declare_strcmp(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("strcmp") {
+            return f;
+        }
+        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let i32 = self.context.i32_type();
+        let fn_type = i32.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+        self.module.add_function("strcmp", fn_type, None)
+    }
+
+    /// Declares the external C library function `sin`.
+    fn declare_sin(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("sin") {
+            return f;
+        }
+        let f64 = self.context.f64_type();
+        let fn_type = f64.fn_type(&[f64.into()], false);
+        self.module.add_function("sin", fn_type, None)
+    }
+
+    /// Declares the external C library function `cos`.
+    fn declare_cos(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("cos") {
+            return f;
+        }
+        let f64 = self.context.f64_type();
+        let fn_type = f64.fn_type(&[f64.into()], false);
+        self.module.add_function("cos", fn_type, None)
+    }
+
+    /// Declares the external C library function `sqrt`.
+    fn declare_sqrt(&self) -> FunctionValue<'ctx> {
+            if let Some(f) = self.module.get_function("sqrt") {
+                return f;
+            }
+            let f64 = self.context.f64_type();
+            let fn_type = f64.fn_type(&[f64.into()], false);
+            self.module.add_function("sqrt", fn_type, None)
+        }
+
+    /// Declares the external C library function `exp`.
+    fn declare_exp(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("exp") {
+            return f;
+        }
+        let f64 = self.context.f64_type();
+        let fn_type = f64.fn_type(&[f64.into()], false);
+        self.module.add_function("exp", fn_type, None)
+    }
+
+    /// Declares the external C library function `rand`.
+    /// `rand()` returns an `int` in C, but we cast it to `f64` for HULK.
+    fn declare_rand(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("rand") {
+            return f;
+        }
+        let i32 = self.context.i32_type();
+        let fn_type = i32.fn_type(&[], false);
+        self.module.add_function("rand", fn_type, None)
+    }
+
+    /// Declares the external C library function `log`.
+        fn declare_log(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("log") {
+            return f;
+        }
+        let f64 = self.context.f64_type();
+        let fn_type = f64.fn_type(&[f64.into()], false);
+        self.module.add_function("log", fn_type, None)
+    }
+
+    /// Declares the C standard library function `srand`, which seeds the random
+    /// number generator used by `rand`.
+    /// Signature: `void @srand(i32 %seed)`
+    fn declare_srand(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("srand") {
+            return f;
+        }
+        let void_type = self.context.void_type();
+        let i32_type = self.context.i32_type();
+        let fn_type = void_type.fn_type(&[i32_type.into()], false);
+        self.module.add_function("srand", fn_type, None)
+    }
+
+    /// Declares the C standard library function `time`, which returns the current
+    /// calendar time as a `time_t` (typically `i64`).
+    /// Signature: `i64 @time(i64* %tloc)`
+    fn declare_time(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("time") {
+            return f;
+        }
+        let i64_type = self.context.i64_type();
+        let i64_ptr = i64_type.ptr_type(inkwell::AddressSpace::default());
+        let fn_type = i64_type.fn_type(&[i64_ptr.into()], false);
+        self.module.add_function("time", fn_type, None)
+    }
+
     fn declare_printf(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("printf") {
             return f;
@@ -81,6 +178,42 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
+
+        // Seed the C random number generator with the current time so that
+        // `rand()` returns a different sequence on each program execution
+        
+        {
+            // Call `time(NULL)` → returns the current time as `i64`.
+            let time_fn = self.declare_time();
+            let null_ptr = self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).const_null();
+            let current_time = self.builder
+                .build_call(time_fn, &[null_ptr.into()], "cur_time")
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: None,
+                })?
+                .try_as_basic_value().left()
+                .and_then(|v| v.into_int_value().into())
+                .ok_or_else(|| CompilerError::CodegenError {
+                    msg: "time call did not return an integer".to_string(),
+                    span: None,
+                })?;
+
+            // `srand` expects an `i32` seed. Truncate the `i64` time to `i32`.
+            let seed = self.builder.build_int_truncate(current_time, i32_type, "seed")
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: None,
+                })?;
+
+            // Call `srand(seed)`.
+            let srand_fn = self.declare_srand();
+            self.builder.build_call(srand_fn, &[seed.into()], "")
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: None,
+                })?;
+        }
 
         // Ejecuta todas las sentencias
         for stmt in &mut program.statements {
@@ -389,7 +522,95 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 Ok(val.into())
             }
 
-            BinOp::Concat | BinOp::Eq | BinOp::Neq=> Err(CompilerError::CodegenError {
+            BinOp::Eq | BinOp::Neq => {
+
+                let ty = expr.left.get_type().ok_or_else(|| CompilerError::CodegenError {
+                    msg: "type not inferred for left operand".to_string(),
+                    span: Some(expr.span),
+                })?;
+
+                match ty {
+
+                    HulkType::Number => {
+                        let lhs = lhs_val.into_float_value();
+                        let rhs = rhs_val.into_float_value();
+
+                        let pred = if matches!(expr.op, BinOp::Eq) {
+                        inkwell::FloatPredicate::OEQ
+                        } else {
+                            inkwell::FloatPredicate::ONE
+                        };
+
+                        let val = self.builder.build_float_compare(pred, lhs, rhs, "eqcmp")
+                        .map_err(|e| CompilerError::CodegenError {
+                            msg: e.to_string(),
+                            span: Some(expr.span),
+                        })?;
+
+                        Ok(val.into())
+                    }
+
+                    HulkType::Boolean => {
+                        let lhs = lhs_val.into_int_value();
+                        let rhs = rhs_val.into_int_value();
+
+                        let pred = if matches!(expr.op, BinOp::Eq) {
+                        inkwell::IntPredicate::EQ
+                        } else {
+                            inkwell::IntPredicate::NE
+                        };
+
+                        let val = self.builder.build_int_compare(pred, lhs, rhs, "eqcmp")
+                        .map_err(|e| CompilerError::CodegenError {
+                            msg: e.to_string(),
+                            span: Some(expr.span),
+                        })?;
+
+                        Ok(val.into())
+                    }
+
+                    HulkType::String => { //Revisar
+                        // For strings we use the standard C library function `strcmp`.
+                        let strcmp_fn = self.declare_strcmp();
+                        let lhs_ptr = lhs_val.into_pointer_value();
+                        let rhs_ptr = rhs_val.into_pointer_value();
+
+                        let call_site = self.builder
+                            .build_call(strcmp_fn, &[lhs_ptr.into(), rhs_ptr.into()], "strcmp")
+                            .map_err(|e| CompilerError::CodegenError {
+                                msg: e.to_string(),
+                                span: Some(expr.span),
+                            })?;
+                        let cmp_result = call_site.try_as_basic_value().left()
+                            .and_then(|v| v.into_int_value().into())
+                            .ok_or_else(|| CompilerError::CodegenError {
+                                msg: "strcmp did not return an integer".to_string(),
+                                span: Some(expr.span),
+                            })?;
+
+                        // strcmp returns 0 if equal, <0 or >0 if different.
+                        // We need to convert that to a boolean (i1).
+                        let zero = self.context.i32_type().const_int(0, false);
+                        let val = if matches!(expr.op, BinOp::Eq) {
+                            self.builder.build_int_compare(inkwell::IntPredicate::EQ, cmp_result, zero, "streq")
+                        } else {
+                            self.builder.build_int_compare(inkwell::IntPredicate::NE, cmp_result, zero, "strne")
+                        }.map_err(|e| CompilerError::CodegenError {
+                            msg: e.to_string(),
+                            span: Some(expr.span),
+                        })?;
+                        Ok(val.into())
+                    }
+
+                    _ => Err(CompilerError::CodegenError {
+                        msg: format!("equality not implemented for type {:?}", ty),
+                        span: Some(expr.span),
+                    }),
+                }
+
+            }
+
+            BinOp::Concat => Err(CompilerError::CodegenError {
                 msg: "Not yet implemented".to_string(),
                 span: Some(expr.span),
             }),
@@ -424,15 +645,140 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(result.into())
             }
-            UnaryOp::Neg => todo!(),
+            UnaryOp::Neg => {
+
+            let operand_float = operand.into_float_value();
+            let result = self.builder.build_float_neg(operand_float, "negtmp")
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+            Ok(result.into())}
         }
     }
     
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
-        Err(CompilerError::CodegenError {
-            msg: format!("function calls not yet implemented in codegen ('{}')", expr.func),
-            span: Some(expr.span),
-        })
+
+        // The type checker guarantees that the function exists and the arguments are valid.
+        match expr.func.as_str() {
+
+            // 1‑argument mathematical functions (sin, cos, sqrt, exp)
+            "sin" | "cos" | "sqrt" | "exp" => {
+                // Evaluate the single argument. The type checker ensures it is a Number.
+                let arg = expr.args[0].accept(self)?.into_float_value();
+
+                // Select the appropriate external C function.
+                let func = match expr.func.as_str() {
+                    "sin"  => self.declare_sin(),
+                    "cos"  => self.declare_cos(),
+                    "sqrt" => self.declare_sqrt(),
+                    "exp"  => self.declare_exp(),
+                    _ => unreachable!(),
+                };
+
+                // Build the call: `call f64 @sin(f64 %arg)`
+                let call_site = self.builder
+                    .build_call(func, &[arg.into()], "calltmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                // Extract the returned float value.
+                let result = call_site.try_as_basic_value().left()
+                    .ok_or_else(|| CompilerError::CodegenError {
+                        msg: format!("{} call did not return a value", expr.func),
+                        span: Some(expr.span),
+                    })?;
+
+                Ok(result.into())
+            }
+
+            // `rand()` – 0 arguments, returns a random integer cast to f64.
+            "rand" => {
+                let rand_fn = self.declare_rand();
+                let call_site = self.builder
+                    .build_call(rand_fn, &[], "randtmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                let rand_int = call_site.try_as_basic_value().left()
+                    .and_then(|v| v.into_int_value().into())
+                    .ok_or_else(|| CompilerError::CodegenError {
+                        msg: "rand call did not return an integer".to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                // Convert the i32 to f64 using a signed integer to float cast.
+                let f64_type = self.context.f64_type();
+                let rand_float = self.builder
+                    .build_signed_int_to_float(rand_int, f64_type, "randf64")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                // Divide by `RAND_MAX` to normalize the value to the interval [0, 1].
+                // `RAND_MAX` is typically 2147483647 on glibc systems.
+                let rand_max = f64_type.const_float(2147483647.0);
+                let result = self.builder
+                    .build_float_div(rand_float, rand_max, "rand_norm")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                Ok(result.into())
+            }
+
+            // `log` – 2 arguments (base, value).
+            "log" => {
+                
+                // logarithm with specified base: log(base, value) = log(value) / log(base)
+                let base = expr.args[0].accept(self)?.into_float_value();
+                let value = expr.args[1].accept(self)?.into_float_value();
+                let log_fn = self.declare_log();
+
+                // Compute log(value)
+                let log_val = self.builder
+                    .build_call(log_fn, &[value.into()], "log_val")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?
+                    .try_as_basic_value().left()
+                    .and_then(|v| v.into_float_value().into())
+                    .ok_or_else(|| CompilerError::CodegenError {
+                        msg: "log(value) call failed".to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                // Compute log(base)
+                let log_base = self.builder
+                    .build_call(log_fn, &[base.into()], "log_base")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?
+                    .try_as_basic_value().left()
+                    .and_then(|v| v.into_float_value().into())
+                    .ok_or_else(|| CompilerError::CodegenError {
+                        msg: "log(base) call failed".to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                // Divide: log(value) / log(base)
+                let result = self.builder.build_float_div(log_val, log_base, "log_result")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(result.into())
+            }
+
+            _ => unreachable!("ICE: unknown built‑in function '{}' escaped type checker", expr.func),
+        }
     }
-    
+        
 }

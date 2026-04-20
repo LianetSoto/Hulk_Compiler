@@ -1,0 +1,24 @@
+// Test built-in math functions and constants
+
+// Constants
+print(PI);   // 3.141593
+print(E);    // 2.718282
+
+// Single-argument math functions
+print(sin(0.0));        // 0.000000
+print(sin(PI / 2.0));   // 1.000000
+print(cos(0.0));        // 1.000000
+print(cos(PI));         // -1.000000
+print(sqrt(16.0));      // 4.000000
+print(exp(1.0));        // 2.718282
+
+// Two-argument log: log(base, value)
+print(log(2.0, 8.0));   // 3.000000   (log2(8) = 3)
+print(log(E, E ^ 3.0)); // 3.000000   (natural log of e^3)
+
+// Combined expressions
+print(sin(PI / 3.0) ^ 2 + cos(PI / 3.0) ^ 2); // 1.000000 (sin²+cos²=1)
+print(log(10.0, 100.0)); // 2.000000  (log10(100)=2)
+
+// rand() returns a number between 0.0 and 1.0
+print(rand());          // e.g., 0.684563 (varies each run)
