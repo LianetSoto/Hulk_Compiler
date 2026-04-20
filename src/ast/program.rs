@@ -8,7 +8,7 @@ pub struct Program {
 }
 
 impl Node for Program {
-    fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         visitor.visit_program(self)
     }
 }

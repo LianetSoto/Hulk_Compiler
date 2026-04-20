@@ -3,7 +3,11 @@ use inkwell::module::Module;
 use inkwell::builder::Builder;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use std::collections::HashMap;
-use crate::ast::{Node, Visitor, Program, ExprStmt, NumberExpr, BinaryOpExpr, PrintExpr, BinOp, Expr, Stmt};
+use crate::semantic::HulkType;
+use crate::ast::{Node, Visitor, Program, ExprStmt, 
+    NumberExpr, BinaryOpExpr, PrintExpr, BinOp, StringExpr,
+    CallExpr, ConstExpr, UnaryOpExpr, BoolExpr};
+use crate::error::{CompilerError};
 
 pub struct LlvmCodeGen<'ctx> {
     context: &'ctx Context, 
@@ -26,17 +30,34 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         }
     }
 
-    pub fn compile(&mut self, program: &Program) -> Result<(), String> {
+    pub fn compile(&mut self, program: &mut Program) -> Result<(), CompilerError> {
         program.accept(self)?;
         Ok(())
     }
 
-    pub fn write_to_file(&self, filename: &str) -> Result<(), String> {
-        self.module.print_to_file(filename).map_err(|e| e.to_string())
+    pub fn write_to_file(&self, filename: &str) -> Result<(), CompilerError> {
+        self.module.print_to_file(filename)
+            .map_err(|e| CompilerError::IoError(e.to_string()))
     }
 
-    pub fn print_ir(&self) {
-        self.module.print_to_stderr();
+    fn get_true_str(&self) -> PointerValue<'ctx> {
+        if let Some(gv) = self.module.get_global("true_str") {
+            return gv.as_pointer_value();
+        }
+        self.builder
+            .build_global_string_ptr("true", "true_str")
+            .unwrap()
+            .as_pointer_value()
+    }
+
+    fn get_false_str(&self) -> PointerValue<'ctx> {
+        if let Some(gv) = self.module.get_global("false_str") {
+            return gv.as_pointer_value();
+        }
+        self.builder
+            .build_global_string_ptr("false", "false_str")
+            .unwrap()
+            .as_pointer_value()
     }
 
     fn declare_printf(&self) -> FunctionValue<'ctx> {
@@ -49,58 +70,227 @@ impl<'ctx> LlvmCodeGen<'ctx> {
     }
 }
 
-
 impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
-    type Result = Result<BasicValueEnum<'ctx>, String>;
+    type Result = Result<BasicValueEnum<'ctx>, CompilerError>;
 
-    fn visit_program(&mut self, program: &Program) -> Self::Result {
-        let f64_type = self.context.f64_type();
-        let main_type = f64_type.fn_type(&[], false);
+    fn visit_program(&mut self, program: &mut Program) -> Self::Result {
+        // Cambia el tipo de retorno de main a i32
+        let i32_type = self.context.i32_type();
+        let main_type = i32_type.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_type, None);
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
 
-        let mut last_value: Option<BasicValueEnum> = None;
-        for stmt in &program.statements {
-            last_value = Some(stmt.accept(self)?);
+        // Ejecuta todas las sentencias
+        for stmt in &mut program.statements {
+            stmt.accept(self)?;
         }
 
-        let ret_val = last_value.unwrap_or_else(|| f64_type.const_float(0.0).into());
-        self.builder.build_return(Some(&ret_val)).map_err(|e| e.to_string())?;
+        // Siempre retorna 0 (éxito)
+        let zero = i32_type.const_int(0, false);
+        self.builder.build_return(Some(&zero))
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: None,
+            })?;
 
         self.current_function = None;
-        Ok(ret_val)
+        Ok(zero.into())
     }
 
-    fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Self::Result {
+    fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result {
         stmt.expr.accept(self)
     }
 
-    fn visit_number(&mut self, expr: &NumberExpr) -> Self::Result {
+    fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
         let f64_type = self.context.f64_type();
         Ok(f64_type.const_float(expr.value).into())
     }
 
-    fn visit_binary_op(&mut self, expr: &BinaryOpExpr) -> Self::Result {
+    /// Generates LLVM IR for a string literal expression.
+    
+    // This method does not evaluate the string; instead, it emits a global constant
+    // containing the string's bytes (UTF-8 + null terminator) and returns a pointer
+    // to that constant. The returned pointer can be used wherever a string is expected,
+    // such as when calling `printf` with the `%s` format specifier.
+
+    // # Steps
+    // 1. Call `build_global_string_ptr` to create an LLVM global constant of type
+    //    `[N x i8]` initialized with the string's UTF-8 bytes and a null terminator.
+    //    This also returns an `i8*` pointer to the first byte.
+    // 2. Convert the returned `GlobalValue` to a `PointerValue` and then to the
+    //    generic `BasicValueEnum` expected by the visitor.
+    //
+    // # Errors
+    // Returns `CodegenError` if LLVM fails to create the global constant (e.g., out
+    // of memory or invalid string content).
+
+    fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
+        let ptr = self.builder
+            .build_global_string_ptr(&expr.value, "str")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: format!("failed to create string constant: {}", e),
+                span: Some(expr.span),
+            })?;
+        Ok(ptr.as_pointer_value().into())
+    }
+
+    /// Generates LLVM IR for a built‑in mathematical constant (`PI` or `E`).
+
+    fn visit_const(&mut self, expr: &mut ConstExpr) -> Self::Result {
+        // Get the LLVM type for 64‑bit floating‑point numbers 
+        let f64_type = self.context.f64_type();
+
+        // Map the constant name (`"PI"` or `"E"`) to its numeric value using Rust's built‑in constants.
+        let value = match expr.name.as_str() {
+            "PI" => std::f64::consts::PI,
+            "E"  => std::f64::consts::E,
+            _ => unreachable!("ICE: unknown constant '{}' escaped type checker", expr.name),
+        };
+
+        Ok(f64_type.const_float(value).into())
+    }
+
+    /// Generates LLVM IR for a boolean literal (`true` or `false`).
+    
+    fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
+        // Get the LLVM type for a 1‑bit integer (`i1`).
+        let bool_type = self.context.bool_type();
+
+        // Get the LLVM type for a 1‑bit integer (`i1`).
+        let value = bool_type.const_int(if expr.value { 1 } else { 0 }, false);
+
+        Ok(value.into())
+    }
+
+    /// Generates LLVM IR for the `print` expression in HULK.
+     
+    // This method delegates to the C standard library function `printf` to perform the
+    // actual output. It selects the appropriate format specifier and argument conversion
+    // based on the static type of the expression being printed.
+
+    /// # Supported Types and Output Format
+    /// - `String`   → printed as plain text followed by a newline (`%s\n`).
+    /// - `Number`   → printed as a floating‑point number followed by a newline (`%f\n`).
+    /// - `Boolean`  → printed as the word `true` or `false` followed by a newline (`%s\n`).
+    
+    // # LLVM Concepts Used
+    // - **Global string constants**: `build_global_string_ptr` creates a global constant
+    //   array of bytes (e.g., `"%s\n\00"`) and returns an `i8*` pointer to its first element.
+    //   This is necessary because `printf` expects a pointer to a null‑terminated format
+    //   string, not an immediate value.
+    // - **`printf` declaration**: The function is lazily declared with the signature
+    //   `i32 @printf(i8*, ...)`. It is assumed that the target platform provides a standard
+    //   C library.
+    // - **`select` instruction**: For `Boolean` values, the LLVM `select` instruction is
+    //   used to choose between a pointer to the global constant `"true"` and a pointer to
+    //   `"false"`, based on the `i1` boolean value.
+
+    fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result {
+
+        // 1. Generate code for the argument expression.
+        let value = expr.argument.accept(self)?;
+
+        // 2. Retrieve the static type of the argument (inferred by the type checker).
+        let arg_ty = expr.argument.get_type().ok_or_else(|| CompilerError::CodegenError {
+            msg: "type not inferred for print argument".to_string(),
+            span: Some(expr.span),
+        })?;
+
+        // 3. Obtain the `printf` function (declare it if not already present).
+        let printf_fn = self.declare_printf();
+
+        // 4. Handle each supported type.
+        let format_str = match arg_ty {
+
+            // 4a. Create (or reuse) a global constant for the format string "%s\n".
+            HulkType::String | HulkType::Boolean => self.builder.build_global_string_ptr("%s\n", "fmt_str"),
+
+            // 4b. Create a global constant for the format string `"%f\n"`.
+            HulkType::Number => self.builder.build_global_string_ptr("%f\n", "fmt_num"),
+
+            // Otherwise
+            _ => return Err(CompilerError::CodegenError {
+                msg: "cannot print this type".to_string(),
+                span: Some(expr.span),
+            }),
+        }.map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // 4b. Retrieve and convert the argument value
+        let llvm_arg = if *arg_ty == HulkType::String {
+            value.into_pointer_value().into()
+
+        } else if *arg_ty == HulkType::Boolean {
+
+            // For a boolean, we have an `i1` value. We need to select between the
+            // global string constants "true" and "false" and pass the chosen pointer.
+            let bool_val = value.into_int_value();
+            
+            let true_ptr = self.get_true_str();
+            let false_ptr = self.get_false_str();
+
+            // let value = if bool_val { true_ptr } else { false_ptr };
+
+            // Use LLVM's `select` instruction: if bool_val is true → true_ptr, else false_ptr.
+            let selected_ptr = self
+                .builder
+                .build_select(bool_val, true_ptr, false_ptr, "bool_str")
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+
+            // Convert the selected pointer to the generic argument type.
+            selected_ptr.into()
+        }else {
+            // For Number, we have an `f64` value.
+            value.into_float_value().into()
+        };
+
+        self.builder.build_call(printf_fn, &[format_str.as_pointer_value().into(), llvm_arg], "printf_call")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        Ok(value)
+    }
+
+    // REVISAR A PARTIR DE AQUI 
+
+    fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
         let lhs = expr.left.accept(self)?.into_float_value();
         let rhs = expr.right.accept(self)?.into_float_value();
 
         match expr.op {
             BinOp::Add => {
-                let val = self.builder.build_float_add(lhs, rhs, "addtmp").map_err(|e| e.to_string())?;
+                let val = self.builder.build_float_add(lhs, rhs, "addtmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
                 Ok(val.into())
             }
             BinOp::Sub => {
-                let val = self.builder.build_float_sub(lhs, rhs, "subtmp").map_err(|e| e.to_string())?;
+                let val = self.builder.build_float_sub(lhs, rhs, "subtmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
                 Ok(val.into())
             }
             BinOp::Mul => {
-                let val = self.builder.build_float_mul(lhs, rhs, "multmp").map_err(|e| e.to_string())?;
+                let val = self.builder.build_float_mul(lhs, rhs, "multmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
                 Ok(val.into())
             }
             BinOp::Div => {
-                let val = self.builder.build_float_div(lhs, rhs, "divtmp").map_err(|e| e.to_string())?;
+                let val = self.builder.build_float_div(lhs, rhs, "divtmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
                 Ok(val.into())
             }
             BinOp::Pow => {
@@ -110,54 +300,101 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     self.module.add_function("llvm.pow.f64", pow_type, None)
                 });
                 let call_site = self.builder.build_call(pow_fn, &[lhs.into(), rhs.into()], "powtmp")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
                 let result = call_site.try_as_basic_value().left()
-                    .ok_or("Failed to convert pow call to basic value")?;
+                    .ok_or_else(|| CompilerError::CodegenError {
+                        msg: "Failed to convert pow call to basic value".to_string(),
+                        span: Some(expr.span),
+                    })?;
                 Ok(result)
             }
-            BinOp::Concat => todo!(),
-            BinOp::Eq => todo!(),
-            BinOp::Neq => todo!(),
-            BinOp::Lt => todo!(),
-            BinOp::Gt => todo!(),
-            BinOp::Leq => todo!(),
-            BinOp::Geq => todo!(),
-            BinOp::And => todo!(),
-            BinOp::Or => todo!(),
+            BinOp::Concat => Err(CompilerError::CodegenError {
+                msg: "String concatenation (@) not yet implemented".to_string(),
+                span: Some(expr.span),
+            }),
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Leq | BinOp::Gt | BinOp::Geq => {
+                // Comparaciones: por ahora solo soportamos números
+                let pred = match expr.op {
+                    BinOp::Eq => inkwell::FloatPredicate::OEQ,
+                    BinOp::Neq => inkwell::FloatPredicate::ONE,
+                    BinOp::Lt => inkwell::FloatPredicate::OLT,
+                    BinOp::Leq => inkwell::FloatPredicate::OLE,
+                    BinOp::Gt => inkwell::FloatPredicate::OGT,
+                    BinOp::Geq => inkwell::FloatPredicate::OGE,
+                    _ => unreachable!(),
+                };
+                let result = self.builder.build_float_compare(pred, lhs, rhs, "cmptmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(result.into())
+            }
+            BinOp::And | BinOp::Or => {
+                let lhs_bool = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ONE,
+                    lhs,
+                    self.context.f64_type().const_float(0.0),
+                    "tobool",
+                ).map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+                let rhs_bool = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ONE,
+                    rhs,
+                    self.context.f64_type().const_float(0.0),
+                    "tobool",
+                ).map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+                let result = match expr.op {
+                    BinOp::And => self.builder.build_and(lhs_bool, rhs_bool, "andtmp"),
+                    BinOp::Or => self.builder.build_or(lhs_bool, rhs_bool, "ortmp"),
+                    _ => unreachable!(),
+                }.map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+                // Convertir i1 a f64 para mantener consistencia (en HULK, Boolean se trata como Number en algunos contextos)
+                let result_f64 = self.builder.build_unsigned_int_to_float(result, self.context.f64_type(), "bool2float")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(result_f64.into())
+            }
         }
     }
-
-    fn visit_print(&mut self, expr: &PrintExpr) -> Self::Result {
-        let value = expr.argument.accept(self)?.into_float_value();
-        let printf_fn = self.declare_printf();
-
-        let format_str = self.builder.build_global_string_ptr("%f\n", "fmt")
-            .map_err(|e| e.to_string())?;
-
-        self.builder.build_call(printf_fn, &[format_str.as_pointer_value().into(), value.into()], "printf_call")
-            .map_err(|e| e.to_string())?;
-
-        Ok(value.into())
+    
+    fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
+        Err(CompilerError::CodegenError {
+            msg: format!("function calls not yet implemented in codegen ('{}')", expr.func),
+            span: Some(expr.span),
+        })
     }
     
-    fn visit_string(&mut self, expr: &crate::ast::StringExpr) -> Self::Result {
-        todo!()
-    }
-    
-    fn visit_call(&mut self, expr: &crate::ast::CallExpr) -> Self::Result {
-        todo!()
-    }
-    
-    fn visit_const(&mut self, expr: &crate::ast::ConstExpr) -> Self::Result {
-        todo!()
-    }
-    
-    fn visit_bool(&mut self, expr: &crate::ast::BoolExpr) -> Self::Result {
-        todo!()
-    }
-    
-    fn visit_unary_op(&mut self, expr: &crate::ast::UnaryOpExpr) -> Self::Result {
-        todo!()
+    fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
+        let operand = expr.expr.accept(self)?;
+        match expr.op {
+            crate::ast::expr::UnaryOp::Not => {
+                // El type checker garantiza que el operando es booleano.
+                // Convertir a i1 si no lo es (aunque debería serlo).
+                let operand_bool = operand.into_int_value();
+                let bool_type = self.context.bool_type();
+                // Negación lógica: XOR con 1
+                let one = bool_type.const_int(1, false);
+                let result = self.builder.build_xor(operand_bool, one, "nottmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(result.into())
+            }
+        }
     }
 }
-

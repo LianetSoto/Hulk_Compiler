@@ -10,7 +10,7 @@ pub enum Stmt {
 
 // IMPLEMENTACIÓN DE Node PARA LOS ENUMS PRINCIPALES
 impl Node for Stmt {
-    fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         match self {
             Stmt::Expr(s) => s.accept(visitor),
             // Stmt::Let(l) => l.accept(visitor), // cuando se añada
@@ -26,7 +26,7 @@ pub struct ExprStmt {
 }
 
 impl Node for ExprStmt {
-    fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         visitor.visit_expr_stmt(self)
     }
 }

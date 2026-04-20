@@ -17,7 +17,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
     let source_map = SourceMap::new(source_code.to_string());
 
     // 1. Syntactic analysis (parsing)
-    let ast = match parse_program(source_code) {
+    let mut ast = match parse_program(source_code) {
         Ok(prog) => prog,
         Err(e) => {
             report_error(&e, &source_map, filename);
@@ -27,7 +27,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
     // 2. Semantic analysis (type checking)
     let mut type_checker = TypeChecker::new();
-    if let Err(errors) = type_checker.check(&ast) {
+    if let Err(errors) = type_checker.check(&mut ast) {
         for err in errors {
             report_error(&err, &source_map, filename);
         }
@@ -37,17 +37,15 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
     // 3. Code generation (LLVM IR)
     let context = Context::create();
     let mut codegen = LlvmCodeGen::new(&context, "hulk_module");
-    codegen.compile(&ast)
-        .map_err(|msg| CompilerError::CodegenError { msg, span: None })?;
-    codegen.write_to_file(output_ir)
-        .map_err(|e| CompilerError::CodegenError { msg: e, span: None })?;
+    codegen.compile(&mut ast)?;
+    codegen.write_to_file(output_ir)?;
 
     // 4. Optional execution
     if execute {
         let exec_path = output_ir.replace(".ll", "");
         compile_and_run(output_ir, &exec_path)?;
     }
-
+    
     Ok(())
 }
 
