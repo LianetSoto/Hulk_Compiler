@@ -91,17 +91,30 @@ impl Visitor for TypeChecker {
             }
 
             BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
-                if !left_type.is_compatible_with(&HulkType::Number) {
-                    self.add_type_error(
-                        "Left operand of comparison must be Number".to_string(),
-                        expr.left.span()
-                    );
-                }
-                if !right_type.is_compatible_with(&HulkType::Number) {
-                    self.add_type_error(
-                        "Right operand of comparison must be Number".to_string(),
-                        expr.right.span()
-                    );
+                match expr.op {
+                    BinOp::Eq | BinOp::Neq => {
+                        if !left_type.is_compatible_with(&right_type) {
+                            self.add_type_error(
+                                format!("Cannot compare {:?} with {:?}", left_type, right_type),
+                                expr.span
+                            );
+                        }
+                    }
+                    _ => {
+                        // <, >, <=, >= just for numbers
+                        if !left_type.is_compatible_with(&HulkType::Number) {
+                            self.add_type_error(
+                                "Left operand of comparison must be Number".to_string(),
+                                expr.left.span()
+                            );
+                        }
+                        if !right_type.is_compatible_with(&HulkType::Number) {
+                            self.add_type_error(
+                                "Right operand of comparison must be Number".to_string(),
+                                expr.right.span()
+                            );
+                        }
+                    }
                 }
                 HulkType::Boolean
             }
@@ -137,7 +150,7 @@ impl Visitor for TypeChecker {
                 expr.argument.span()
             );
         }
-        let ty = HulkType::Number; // print retorna Number (o podría ser Void)
+        let ty = HulkType::Number; // print return Number
         expr.ty = Some(ty.clone());
         ty
     }
