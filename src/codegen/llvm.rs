@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::semantic::HulkType;
 use crate::ast::{Node, Visitor, Program, ExprStmt, 
     NumberExpr, BinaryOpExpr, PrintExpr, BinOp, StringExpr,
-    CallExpr, ConstExpr, UnaryOpExpr, BoolExpr};
+    CallExpr, ConstExpr, UnaryOpExpr, BoolExpr, UnaryOp};
 use crate::error::{CompilerError};
 
 pub struct LlvmCodeGen<'ctx> {
@@ -254,14 +254,23 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(value)
     }
 
-    // REVISAR A PARTIR DE AQUI 
 
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
-        let lhs = expr.left.accept(self)?.into_float_value();
-        let rhs = expr.right.accept(self)?.into_float_value();
+
+
+        let lhs_val = expr.left.accept(self)?;
+        let rhs_val = expr.right.accept(self)?;
+
 
         match expr.op {
+
+            // Arithmetic operators (expect Number, return Number)
+
             BinOp::Add => {
+
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
                 let val = self.builder.build_float_add(lhs, rhs, "addtmp")
                     .map_err(|e| CompilerError::CodegenError {
                         msg: e.to_string(),
@@ -269,7 +278,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(val.into())
             }
+
             BinOp::Sub => {
+
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
                 let val = self.builder.build_float_sub(lhs, rhs, "subtmp")
                     .map_err(|e| CompilerError::CodegenError {
                         msg: e.to_string(),
@@ -277,7 +291,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(val.into())
             }
+
             BinOp::Mul => {
+
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
                 let val = self.builder.build_float_mul(lhs, rhs, "multmp")
                     .map_err(|e| CompilerError::CodegenError {
                         msg: e.to_string(),
@@ -285,7 +304,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(val.into())
             }
+
             BinOp::Div => {
+
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
                 let val = self.builder.build_float_div(lhs, rhs, "divtmp")
                     .map_err(|e| CompilerError::CodegenError {
                         msg: e.to_string(),
@@ -293,7 +317,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(val.into())
             }
-            BinOp::Pow => {
+
+            BinOp::Pow => { //Revisar
+
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
                 let pow_fn = self.module.get_function("llvm.pow.f64").unwrap_or_else(|| {
                     let f64 = self.context.f64_type();
                     let pow_type = f64.fn_type(&[f64.into(), f64.into()], false);
@@ -311,21 +340,22 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(result)
             }
-            BinOp::Concat => Err(CompilerError::CodegenError {
-                msg: "String concatenation (@) not yet implemented".to_string(),
-                span: Some(expr.span),
-            }),
-            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Leq | BinOp::Gt | BinOp::Geq => {
-                // Comparaciones: por ahora solo soportamos números
+
+            // Comparison operators (expect Number, return Boolean)
+            
+            BinOp::Lt | BinOp::Gt | BinOp::Leq  | BinOp::Geq => {
+
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
                 let pred = match expr.op {
-                    BinOp::Eq => inkwell::FloatPredicate::OEQ,
-                    BinOp::Neq => inkwell::FloatPredicate::ONE,
                     BinOp::Lt => inkwell::FloatPredicate::OLT,
-                    BinOp::Leq => inkwell::FloatPredicate::OLE,
                     BinOp::Gt => inkwell::FloatPredicate::OGT,
+                    BinOp::Leq => inkwell::FloatPredicate::OLE,
                     BinOp::Geq => inkwell::FloatPredicate::OGE,
                     _ => unreachable!(),
                 };
+
                 let result = self.builder.build_float_compare(pred, lhs, rhs, "cmptmp")
                     .map_err(|e| CompilerError::CodegenError {
                         msg: e.to_string(),
@@ -333,40 +363,66 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     })?;
                 Ok(result.into())
             }
-            BinOp::And | BinOp::Or => {
-                let lhs_bool = self.builder.build_float_compare(
-                    inkwell::FloatPredicate::ONE,
-                    lhs,
-                    self.context.f64_type().const_float(0.0),
-                    "tobool",
-                ).map_err(|e| CompilerError::CodegenError {
-                    msg: e.to_string(),
-                    span: Some(expr.span),
-                })?;
-                let rhs_bool = self.builder.build_float_compare(
-                    inkwell::FloatPredicate::ONE,
-                    rhs,
-                    self.context.f64_type().const_float(0.0),
-                    "tobool",
-                ).map_err(|e| CompilerError::CodegenError {
-                    msg: e.to_string(),
-                    span: Some(expr.span),
-                })?;
-                let result = match expr.op {
-                    BinOp::And => self.builder.build_and(lhs_bool, rhs_bool, "andtmp"),
-                    BinOp::Or => self.builder.build_or(lhs_bool, rhs_bool, "ortmp"),
-                    _ => unreachable!(),
-                }.map_err(|e| CompilerError::CodegenError {
-                    msg: e.to_string(),
-                    span: Some(expr.span),
-                })?;
-                // Convertir i1 a f64 para mantener consistencia (en HULK, Boolean se trata como Number en algunos contextos)
-                let result_f64 = self.builder.build_unsigned_int_to_float(result, self.context.f64_type(), "bool2float")
+
+            // Logical AND/OR: both operands are guaranteed to be Boolean (i1) by the type checker.
+
+            BinOp::And => {
+                let lhs = lhs_val.into_int_value();
+                let rhs = rhs_val.into_int_value();
+                
+                let val = self.builder.build_and(lhs, rhs, "andtmp")
                     .map_err(|e| CompilerError::CodegenError {
                         msg: e.to_string(),
                         span: Some(expr.span),
                     })?;
-                Ok(result_f64.into())
+                Ok(val.into())
+            }
+
+            BinOp::Or => {
+                let lhs = lhs_val.into_int_value();
+                let rhs = rhs_val.into_int_value();
+                let val = self.builder.build_or(lhs, rhs, "ortmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(val.into())
+            }
+
+            BinOp::Concat | BinOp::Eq | BinOp::Neq=> Err(CompilerError::CodegenError {
+                msg: "Not yet implemented".to_string(),
+                span: Some(expr.span),
+            }),
+
+        }
+    }
+
+    /// Generates LLVM IR for a unary operation.
+
+    fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
+        let operand = expr.expr.accept(self)?;
+        match expr.op {
+            UnaryOp::Not => {
+
+                // # Logical NOT implementation
+                // Since LLVM does not have a dedicated "logical not" instruction, we implement it
+                // using the XOR (`xor`) instruction with the constant `1`.
+                //   - `1 xor 1 = 0`  (true  → false)
+                //   - `0 xor 1 = 1`  (false → true)
+
+                let operand_bool = operand.into_int_value();
+
+                // Obtain the LLVM `i1` type and create a constant integer `1` of type `i1`.
+                let bool_type = self.context.bool_type();
+                let one = bool_type.const_int(1, false);
+
+                // Build the XOR instruction: 
+                let result = self.builder.build_xor(operand_bool, one, "nottmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(result.into())
             }
         }
     }
@@ -378,23 +434,4 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         })
     }
     
-    fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
-        let operand = expr.expr.accept(self)?;
-        match expr.op {
-            crate::ast::expr::UnaryOp::Not => {
-                // El type checker garantiza que el operando es booleano.
-                // Convertir a i1 si no lo es (aunque debería serlo).
-                let operand_bool = operand.into_int_value();
-                let bool_type = self.context.bool_type();
-                // Negación lógica: XOR con 1
-                let one = bool_type.const_int(1, false);
-                let result = self.builder.build_xor(operand_bool, one, "nottmp")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-                Ok(result.into())
-            }
-        }
-    }
 }
