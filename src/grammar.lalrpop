@@ -1,4 +1,4 @@
-use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp};
+use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp, VariableExpr, LetExpr, AssignExpr, BlockExpr};
 use crate::lexer::Token;
 use crate::error::CompilerError;
 use crate::error::Span;
@@ -11,6 +11,7 @@ extern {
 
     enum Token {
         "number" => Token::Number(<f64>),
+        "identifier" => Token::Identifier(<String>),
         "+"      => Token::Plus,
         "-"      => Token::Minus,
         "*"      => Token::Mult,
@@ -18,10 +19,14 @@ extern {
         "^"      => Token::Power,
         "("      => Token::LParen,
         ")"      => Token::RParen,
+        "{"      => Token::LBrace,
+        "}"      => Token::RBrace,
         ";"      => Token::Semicolon,
         ","      => Token::Comma,
         "print"  => Token::Print,
         "string" => Token::String(<String>),
+        "let"    => Token::Let,
+        "in"     => Token::In,
         "@" => Token::Concat,
         "sin" => Token::Sin,
         "cos" => Token::Cos,
@@ -42,146 +47,221 @@ extern {
         ">"  => Token::Gt,
         "<=" => Token::Leq,
         ">=" => Token::Geq,
+        "="          => Token::Eq,
+        ":="         => Token::Assign,
     }
 }
 
-// Programa: lista de sentencias (no necesita ty)
+// Program: list of expressions separated by ';', with optional trailing ';'
+ExprWithSemicolon: (Box<Expr>, Span) = {
+    <start:@L> <e:Expr> ";" <end:@R> => (e, Span::new(start, end))
+};
+
+// List of expressions separated by ';', the last may omit the ';'
+ExprsSeparatedBySemicolon: Vec<(Box<Expr>, Span)> = {
+    <mut v:ExprWithSemicolon*> <last:Expr?> => {
+        let mut vec = v;
+        if let Some(e) = last {
+            let span = e.span();
+            vec.push((e, span));
+        }
+        vec
+    }
+};
+
 pub Program: Box<Program> = {
-    <start:@L> <stmts:Stmt*> <end:@R> => {
+    <start:@L> <items:ExprsSeparatedBySemicolon> <end:@R> => {
+        let statements = items.into_iter().map(|(e, span)| {
+            Stmt::Expr(ExprStmt { expr: e, span })
+        }).collect();
         Box::new(Program {
-            statements: stmts,
+            statements,
             span: Span::new(start, end),
         })
     }
 };
 
-// Sentencia: expresión seguida de ';' (no necesita ty)
-Stmt: Stmt = {
-    <start:@L> <e:Expr> ";" <end:@R> => {
-        Stmt::Expr(ExprStmt {
-            expr: e,
-            span: Span::new(start, end),
-        })
-    }
-};
-
-// Nivel más bajo: OR lógico (|)
+// Expressions
 Expr: Box<Expr> = {
-    <start:@L> <l:Expr> "|" <r:Logical> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <e:SimpleExpr> => e,
+    <e:BlockExpr> => e,
+};
+
+SimpleExpr: Box<Expr> = {
+    <e:LetExpr> => e,
+    <e:AssignExpr> => e,
+    <e:LogicalOrExpr> => e,
+};
+
+// Blocks{ ... }
+BlockExpr: Box<Expr> = {
+    <start:@L> "{" <exprs:BlockInner> "}" <end:@R> => {
+        Box::new(Expr::Block(BlockExpr {
+            expressions: exprs,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    }
+};
+
+// Inside a block: zero or more expressions followed by ';'
+// and optionally a final expression without ';'
+BlockInner: Vec<Box<Expr>> = {
+    <mut v:(<Expr> ";")*> <last:Expr?> => {
+        let mut vec = v;
+        if let Some(e) = last { vec.push(e); }
+        vec
+    }
+};
+
+// Let expression
+LetExpr: Box<Expr> = {
+    <start:@L> "let" <bindings:LetBindings> "in" <body:Expr> <end:@R> => {
+        Box::new(Expr::Let(LetExpr {
+            bindings,
+            body,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    }
+};
+
+LetBindings: Vec<(String, Box<Expr>)> = {
+    <first:Binding> <rest:( "," <Binding> )*> => {
+        let mut bindings = vec![first];
+        for b in rest { bindings.push(b); }
+        bindings
+    }
+};
+
+Binding: (String, Box<Expr>) = {
+    <id:"identifier"> "=" <e:LogicalOrExpr> => (id, e)
+};
+
+//Destructive assignment (:=)
+AssignExpr: Box<Expr> = {
+    <start:@L> <id:"identifier"> ":=" <rhs:LogicalOrExpr> <end:@R> => {
+        Box::new(Expr::Assign(AssignExpr {
+            name: id,
+            value: rhs,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    }
+};
+
+//Operators
+LogicalOrExpr: Box<Expr> = {
+    <start:@L> <l:LogicalOrExpr> "|" <r:LogicalAndExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Or,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    Logical,
+    <e:LogicalAndExpr> => e,
 };
 
-// Nivel: AND lógico (&)
-Logical: Box<Expr> = {
-    <start:@L> <l:Logical> "&" <r:Comparison> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+LogicalAndExpr: Box<Expr> = {
+    <start:@L> <l:LogicalAndExpr> "&" <r:ComparisonExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::And,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    Comparison,
+    <e:ComparisonExpr> => e,
 };
 
-// Nivel: comparaciones (==, !=, <, >, <=, >=)
-Comparison: Box<Expr> = {
-    <start:@L> <l:Comparison> "==" <r:AddExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+ComparisonExpr: Box<Expr> = {
+    <start:@L> <l:ComparisonExpr> "==" <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Eq,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:Comparison> "!=" <r:AddExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:ComparisonExpr> "!=" <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Neq,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:Comparison> "<"  <r:AddExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:ComparisonExpr> "<"  <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Lt,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:Comparison> ">"  <r:AddExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:ComparisonExpr> ">"  <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Gt,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:Comparison> "<=" <r:AddExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:ComparisonExpr> "<=" <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Leq,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:Comparison> ">=" <r:AddExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:ComparisonExpr> ">=" <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Geq,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    AddExpr,
+    <e:AddSubExpr> => e,
 };
 
-// Nivel: sumas, restas y concatenación
-AddExpr: Box<Expr> = {
-    <start:@L> <l:AddExpr> "+" <r:MulExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+AddSubExpr: Box<Expr> = {
+    <start:@L> <l:AddSubExpr> "+" <r:MulDivExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Add,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:AddExpr> "-" <r:MulExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:AddSubExpr> "-" <r:MulDivExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Sub,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:AddExpr> "@" <r:MulExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:AddSubExpr> "@" <r:MulDivExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Concat,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    MulExpr,
+    <e:MulDivExpr> => e,
 };
 
-// Nivel: multiplicaciones y divisiones
-MulExpr: Box<Expr> = {
-    <start:@L> <l:MulExpr> "*" <r:PowerExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+MulDivExpr: Box<Expr> = {
+    <start:@L> <l:MulDivExpr> "*" <r:PowerExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Mul,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> <l:MulExpr> "/" <r:PowerExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:MulDivExpr> "/" <r:PowerExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Div,
         right: r,
         span: Span::new(start, end),
         ty: None,
     })),
-    PowerExpr,
+    <e:PowerExpr> => e,
 };
 
-// Nivel: potencia (asociativa derecha)
 PowerExpr: Box<Expr> = {
     <start:@L> <l:PowerExpr> "^" <r:UnaryExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
@@ -190,10 +270,9 @@ PowerExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-    UnaryExpr,
+    <e:UnaryExpr> => e,
 };
 
-// Nivel: operadores unarios ! and -
 UnaryExpr: Box<Expr> = {
     <start:@L> "!" <e:UnaryExpr> <end:@R> => Box::new(Expr::UnaryOp(UnaryOpExpr {
         op: UnaryOp::Not,
@@ -207,12 +286,11 @@ UnaryExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-    Atom,
+    <e:AtomicExpr> => e,
 };
 
-// Nivel atómico: números, strings, constantes, llamadas, paréntesis, booleanos
-Atom: Box<Expr> = {
-    // Paréntesis: no crean nodo nuevo, solo pasan la expresión interna
+//Atomic level
+AtomicExpr: Box<Expr> = {
     "(" <e:Expr> ")" => e,
 
     <start:@L> <n:"number"> <end:@R> => Box::new(Expr::Number(NumberExpr {
@@ -220,13 +298,11 @@ Atom: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-
     <start:@L> <s:"string"> <end:@R> => Box::new(Expr::String(StringExpr {
         value: s,
         span: Span::new(start, end),
         ty: None,
     })),
-
     <start:@L> "true" <end:@R> => Box::new(Expr::Bool(BoolExpr {
         value: true,
         span: Span::new(start, end),
@@ -237,7 +313,6 @@ Atom: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-
     <start:@L> "PI" <end:@R> => Box::new(Expr::Const(ConstExpr {
         name: "PI".to_string(),
         span: Span::new(start, end),
@@ -248,14 +323,13 @@ Atom: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-
     <start:@L> "print" "(" <e:Expr> ")" <end:@R> => Box::new(Expr::Print(PrintExpr {
         argument: e,
         span: Span::new(start, end),
         ty: None,
     })),
 
-    // Funciones de un argumento
+    //builtin functions
     <start:@L> "sin"  "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
         func: "sin".to_string(),
         args: vec![arg],
@@ -274,7 +348,7 @@ Atom: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> "exp" "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
+    <start:@L> "exp"  "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
         func: "exp".to_string(),
         args: vec![arg],
         span: Span::new(start, end),
@@ -286,10 +360,16 @@ Atom: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-
     <start:@L> "log" "(" <base:Expr> "," <val:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
         func: "log".to_string(),
         args: vec![base, val],
+        span: Span::new(start, end),
+        ty: None,
+    })),
+
+    //id
+    <start:@L> <id:"identifier"> <end:@R> => Box::new(Expr::Variable(VariableExpr {
+        name: id,
         span: Span::new(start, end),
         ty: None,
     })),

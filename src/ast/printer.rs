@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOpExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, Visitor};
+use crate::ast::{AssignExpr, BinaryOpExpr, BlockExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, LetExpr, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, VariableExpr, Visitor};
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -108,5 +108,43 @@ impl Visitor for PrettyPrinter {
         self.indent += 1;
         expr.expr.accept(self);
         self.indent -= 1;
+    }
+    
+    fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
+        self.write_line(&format!("Variable({})", expr.name));
+    }
+
+    fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
+        self.write_line("Let {");
+        self.indent += 1;
+        for (name, init) in &mut expr.bindings {  // <- &mut aquí
+            self.write_line(&format!("{} =", name));
+            self.indent += 1;
+            init.accept(self);  // ahora init es &mut Box<Expr>, funciona
+            self.indent -= 1;
+        }
+        self.write_line("body:");
+        self.indent += 1;
+        expr.body.accept(self);
+        self.indent -= 1;
+        self.indent -= 1;
+        self.write_line("}");
 }
+
+    fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result {
+        self.write_line(&format!("Assign({} :=)", expr.name));
+        self.indent += 1;
+        expr.value.accept(self);
+        self.indent -= 1;
+    }
+
+    fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
+        self.write_line("Block {");
+        self.indent += 1;
+        for e in &mut expr.expressions {
+            e.accept(self);
+        }
+        self.indent -= 1;
+        self.write_line("}");
+    }
 }

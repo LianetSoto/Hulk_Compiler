@@ -12,7 +12,11 @@ pub enum Expr {
     Call(CallExpr),
     Const(ConstExpr),
     Bool(BoolExpr),
-    UnaryOp(UnaryOpExpr)
+    UnaryOp(UnaryOpExpr),
+    Variable(VariableExpr),
+    Let(LetExpr),
+    Assign(AssignExpr),
+    Block(BlockExpr),
 }
 
 impl Expr {
@@ -26,6 +30,10 @@ impl Expr {
             Expr::Const(c) => c.span,
             Expr::Call(c) => c.span,
             Expr::UnaryOp(u) => u.span,
+            Expr::Variable(v) => v.span,
+            Expr::Let(l) => l.span,
+            Expr::Assign(a) => a.span,
+            Expr::Block(b) => b.span,
         }
     }
 
@@ -39,6 +47,10 @@ impl Expr {
             Expr::Const(c) => c.ty.as_ref(),
             Expr::Bool(b) => b.ty.as_ref(),
             Expr::UnaryOp(u) => u.ty.as_ref(),
+            Expr::Variable(v) => v.ty.as_ref(),
+            Expr::Let(l) => l.ty.as_ref(),
+            Expr::Assign(a) => a.ty.as_ref(),
+            Expr::Block(b) => b.ty.as_ref(),
         }
     }
 }
@@ -54,6 +66,10 @@ impl Node for Expr {
             Expr::String(string_expr) => string_expr.accept(visitor),
             Expr::Bool(bool_expr) => bool_expr.accept(visitor),
             Expr::UnaryOp(unary_op_expr) => unary_op_expr.accept(visitor),
+            Expr::Variable(v) => v.accept(visitor),
+            Expr::Let(l) => l.accept(visitor),
+            Expr::Assign(a) => a.accept(visitor),
+            Expr::Block(b) => b.accept(visitor),
         }
     }
 }
@@ -178,4 +194,57 @@ impl Node for UnaryOpExpr{
     fn accept<V: Visitor>(&mut self, v: &mut V) -> V::Result { 
         v.visit_unary_op(self) 
     } 
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableExpr {
+    pub name: String,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for VariableExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_variable(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LetExpr {
+    pub bindings: Vec<(String, Box<Expr>)>,
+    pub body: Box<Expr>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for LetExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_let(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignExpr {
+    pub name: String,
+    pub value: Box<Expr>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for AssignExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_assign(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockExpr {
+    pub expressions: Vec<Box<Expr>>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for BlockExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_block(self)
+    }
 }
