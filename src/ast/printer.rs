@@ -1,4 +1,4 @@
-use crate::ast::{AssignExpr, BinaryOpExpr, BlockExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, LetExpr, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, VariableExpr, Visitor};
+use crate::ast::{AssignExpr, BinaryOpExpr, BlockExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, LetExpr, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, VariableExpr, Visitor, IfExpr, WhileExpr, ForExpr};
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -117,10 +117,10 @@ impl Visitor for PrettyPrinter {
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
         self.write_line("Let {");
         self.indent += 1;
-        for (name, init) in &mut expr.bindings {  // <- &mut aquí
+        for (name, init) in &mut expr.bindings { 
             self.write_line(&format!("{} =", name));
             self.indent += 1;
-            init.accept(self);  // ahora init es &mut Box<Expr>, funciona
+            init.accept(self); 
             self.indent -= 1;
         }
         self.write_line("body:");
@@ -146,5 +146,66 @@ impl Visitor for PrettyPrinter {
         }
         self.indent -= 1;
         self.write_line("}");
+    }
+    
+    fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
+        self.write_line("If {");
+        self.indent += 1;
+        self.write_line("condition:");
+        self.indent += 1;
+        expr.condition.accept(self);
+        self.indent -= 1;
+        self.write_line("then:");
+        self.indent += 1;
+        expr.then_branch.accept(self);
+        self.indent -= 1;
+        for (i, (cond, body)) in expr.elif_branches.iter_mut().enumerate() {
+            self.write_line(&format!("elif_{}:", i));
+            self.indent += 1;
+            self.write_line("condition:");
+            self.indent += 1;
+            cond.accept(self);
+            self.indent -= 1;
+            self.write_line("body:");
+            self.indent += 1;
+            body.accept(self);
+            self.indent -= 1;
+            self.indent -= 1;
+        }
+        if let Some(else_expr) = &mut expr.else_branch {
+            self.write_line("else:");
+            self.indent += 1;
+            else_expr.accept(self);
+            self.indent -= 1;
+        }
+        self.indent -= 1;
+        self.write_line("}");
+    }
+
+    fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result {
+        self.write_line("While {");
+        self.indent += 1;
+        self.write_line("condition:");
+        self.indent += 1;
+        expr.condition.accept(self);
+        self.indent -= 1;
+        self.write_line("body:");
+        self.indent += 1;
+        expr.body.accept(self);
+        self.indent -= 1;
+        self.indent -= 1;
+        self.write_line("}");
+    }
+
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+        self.write_line(&format!("For({} in", expr.var));
+        self.indent += 1;
+        expr.iterable.accept(self);
+        self.write_line("body:");
+        self.indent += 1;
+        expr.body.accept(self);
+        self.indent -= 1;
+        self.indent -= 1;
+        self.write_line(")");
     }
 }

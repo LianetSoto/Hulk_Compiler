@@ -614,8 +614,8 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 msg: "Not yet implemented".to_string(),
                 span: Some(expr.span),
             }),
-
-        }
+            BinOp::Mod => todo!(),
+                    }
     }
 
     /// Generates LLVM IR for a unary operation.

@@ -17,6 +17,9 @@ pub enum Expr {
     Let(LetExpr),
     Assign(AssignExpr),
     Block(BlockExpr),
+    If(IfExpr),
+    While(WhileExpr),
+    For(ForExpr),
 }
 
 impl Expr {
@@ -34,6 +37,9 @@ impl Expr {
             Expr::Let(l) => l.span,
             Expr::Assign(a) => a.span,
             Expr::Block(b) => b.span,
+            Expr::If(i) => i.span,
+            Expr::While(w) => w.span,
+            Expr::For(f) => f.span,
         }
     }
 
@@ -51,6 +57,9 @@ impl Expr {
             Expr::Let(l) => l.ty.as_ref(),
             Expr::Assign(a) => a.ty.as_ref(),
             Expr::Block(b) => b.ty.as_ref(),
+            Expr::If(i) => i.ty.as_ref(),
+            Expr::While(w) => w.ty.as_ref(),
+            Expr::For(f) => f.ty.as_ref(),
         }
     }
 }
@@ -70,6 +79,9 @@ impl Node for Expr {
             Expr::Let(l) => l.accept(visitor),
             Expr::Assign(a) => a.accept(visitor),
             Expr::Block(b) => b.accept(visitor),
+            Expr::If(i) => i.accept(visitor),
+            Expr::While(w) => w.accept(visitor),
+            Expr::For(f) => f.accept(visitor),
         }
     }
 }
@@ -92,7 +104,7 @@ impl Node for NumberExpr {
 pub enum BinOp {
     Add, Sub, Mul, Div, Pow, Concat, 
     Eq, Neq, Lt, Gt, Leq, Geq,
-    And, Or, 
+    And, Or, Mod,
 }
 
 // BINARY OP EXPR (operación binaria)
@@ -246,5 +258,50 @@ pub struct BlockExpr {
 impl Node for BlockExpr {
     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         visitor.visit_block(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfExpr {
+    pub condition: Box<Expr>,
+    pub then_branch: Box<Expr>,
+    pub elif_branches: Vec<(Box<Expr>, Box<Expr>)>, // (condition, body)
+    pub else_branch: Option<Box<Expr>>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for IfExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_if(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileExpr {
+    pub condition: Box<Expr>,
+    pub body: Box<Expr>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for WhileExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_while(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForExpr {
+    pub var: String,
+    pub iterable: Box<Expr>,
+    pub body: Box<Expr>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for ForExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_for(self)
     }
 }

@@ -54,7 +54,7 @@ impl Visitor for TypeChecker {
         let right_type = expr.right.accept(self);
 
         let result_ty = match expr.op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow => {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod=> {
                 if !left_type.is_compatible_with(&HulkType::Number) {
                     self.add_type_error(
                         "Left operand of arithmetic operator must be Number".to_string(),
@@ -218,6 +218,22 @@ impl Visitor for TypeChecker {
                     }
                 }
                 HulkType::Number
+            }
+            "range" => {
+                if expr.args.len() != 2 {
+                    self.add_type_error("range expects 2 arguments (start, end)".to_string(), expr.span);
+                } else {
+                    let start_ty = expr.args[0].accept(self);
+                    let end_ty = expr.args[1].accept(self);
+                    if !start_ty.is_compatible_with(&HulkType::Number) {
+                        self.add_type_error("range start must be Number".to_string(), expr.args[0].span());
+                    }
+                    if !end_ty.is_compatible_with(&HulkType::Number) {
+                        self.add_type_error("range end must be Number".to_string(), expr.args[1].span());
+                    }
+                }
+                // range devuelve un iterable (por ahora tratamos como Number o podrías definir un tipo especial)
+                HulkType::Object
             }
             _ => {
                 self.add_type_error(
