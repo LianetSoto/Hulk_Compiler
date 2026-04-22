@@ -1,4 +1,4 @@
-use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp, VariableExpr, LetExpr, AssignExpr, BlockExpr};
+use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp, VariableExpr, LetExpr, AssignExpr, BlockExpr, IfExpr, WhileExpr, ForExpr};
 use crate::lexer::Token;
 use crate::error::CompilerError;
 use crate::error::Span;
@@ -16,6 +16,7 @@ extern {
         "-"      => Token::Minus,
         "*"      => Token::Mult,
         "/"      => Token::Div,
+        "%"      => Token::Percent,
         "^"      => Token::Power,
         "("      => Token::LParen,
         ")"      => Token::RParen,
@@ -47,12 +48,27 @@ extern {
         ">"  => Token::Gt,
         "<=" => Token::Leq,
         ">=" => Token::Geq,
-        "="          => Token::Eq,
-        ":="         => Token::Assign,
+        "="  => Token::Eq,
+        ":=" => Token::Assign,
+        "if"     => Token::If,
+        "else"   => Token::Else,
+        "elif"   => Token::Elif,
+        "while"  => Token::While,
+        "for"    => Token::For,
     }
 }
 
-// Program: list of expressions separated by ';', with optional trailing ';'
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+
 ExprWithSemicolon: (Box<Expr>, Span) = {
     <start:@L> <e:Expr> ";" <end:@R> => (e, Span::new(start, end))
 };
@@ -90,6 +106,9 @@ Expr: Box<Expr> = {
 SimpleExpr: Box<Expr> = {
     <e:LetExpr> => e,
     <e:AssignExpr> => e,
+    <e:IfExpr> => e,
+    <e:WhileExpr> => e,
+    <e:ForExpr> => e,
     <e:LogicalOrExpr> => e,
 };
 
@@ -144,6 +163,47 @@ AssignExpr: Box<Expr> = {
         Box::new(Expr::Assign(AssignExpr {
             name: id,
             value: rhs,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    }
+};
+
+//Flow control
+Elif: (Box<Expr>, Box<Expr>) = {
+    "elif" "(" <cond:Expr> ")" <body:Expr> => (cond, body)
+};
+
+IfExpr: Box<Expr> = {
+    <start:@L> "if" "(" <cond:Expr> ")" <then:Expr> <elif_branches:Elif*> "else" <else_branch:Expr> <end:@R> => {
+        Box::new(Expr::If(IfExpr {
+            condition: cond,
+            then_branch: then,
+            elif_branches: elif_branches,
+            else_branch: Some(else_branch),
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    }
+};
+
+WhileExpr: Box<Expr> = {
+    <start:@L> "while" "(" <cond:Expr> ")" <body:Expr> <end:@R> => {
+        Box::new(Expr::While(WhileExpr {
+            condition: cond,
+            body: body,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    }
+};
+
+ForExpr: Box<Expr> = {
+    <start:@L> "for" "(" <var:"identifier"> "in" <iter:Expr> ")" <body:Expr> <end:@R> => {
+        Box::new(Expr::For(ForExpr {
+            var: var,
+            iterable: iter,
+            body: body,
             span: Span::new(start, end),
             ty: None,
         }))
@@ -259,6 +319,13 @@ MulDivExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
+    <start:@L> <l:MulDivExpr> "%" <r:PowerExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::Mod,
+        right: r,
+        span: Span::new(start, end),
+        ty: None,
+    })),
     <e:PowerExpr> => e,
 };
 
@@ -329,43 +396,15 @@ AtomicExpr: Box<Expr> = {
         ty: None,
     })),
 
-    //builtin functions
-    <start:@L> "sin"  "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
-        func: "sin".to_string(),
-        args: vec![arg],
-        span: Span::new(start, end),
-        ty: None,
-    })),
-    <start:@L> "cos"  "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
-        func: "cos".to_string(),
-        args: vec![arg],
-        span: Span::new(start, end),
-        ty: None,
-    })),
-    <start:@L> "sqrt" "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
-        func: "sqrt".to_string(),
-        args: vec![arg],
-        span: Span::new(start, end),
-        ty: None,
-    })),
-    <start:@L> "exp"  "(" <arg:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
-        func: "exp".to_string(),
-        args: vec![arg],
-        span: Span::new(start, end),
-        ty: None,
-    })),
-    <start:@L> "rand" "(" ")" <end:@R> => Box::new(Expr::Call(CallExpr {
-        func: "rand".to_string(),
-        args: vec![],
-        span: Span::new(start, end),
-        ty: None,
-    })),
-    <start:@L> "log" "(" <base:Expr> "," <val:Expr> ")" <end:@R> => Box::new(Expr::Call(CallExpr {
-        func: "log".to_string(),
-        args: vec![base, val],
-        span: Span::new(start, end),
-        ty: None,
-    })),
+    // Llamada a función genérica (incluye sin, cos, range, etc.)
+    <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
+        Box::new(Expr::Call(CallExpr {
+            func: id,
+            args: args,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    },
 
     //id
     <start:@L> <id:"identifier"> <end:@R> => Box::new(Expr::Variable(VariableExpr {
