@@ -1,4 +1,4 @@
-use crate::ast::{AssignExpr, BinaryOpExpr, BlockExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, LetExpr, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, VariableExpr, Visitor, IfExpr, WhileExpr, ForExpr};
+use crate::ast::{AssignExpr, BinaryOpExpr, BlockExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, ForExpr, IfExpr, LetExpr, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, VariableExpr, Visitor, WhileExpr};
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -93,9 +93,9 @@ impl Visitor for PrettyPrinter {
 
     fn visit_const(&mut self, expr: &mut ConstExpr) -> Self::Result {
         self.write_line(&format!("Const({})", expr.name));
-        }
-        
-        fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
+    }
+
+    fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
         self.write_line(&format!("Bool({})", expr.value));
     }
 
@@ -109,7 +109,7 @@ impl Visitor for PrettyPrinter {
         expr.expr.accept(self);
         self.indent -= 1;
     }
-    
+
     fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
         self.write_line(&format!("Variable({})", expr.name));
     }
@@ -117,10 +117,10 @@ impl Visitor for PrettyPrinter {
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
         self.write_line("Let {");
         self.indent += 1;
-        for (name, init) in &mut expr.bindings { 
+        for (name, init) in &mut expr.bindings {
             self.write_line(&format!("{} =", name));
             self.indent += 1;
-            init.accept(self); 
+            init.accept(self);
             self.indent -= 1;
         }
         self.write_line("body:");
@@ -129,7 +129,7 @@ impl Visitor for PrettyPrinter {
         self.indent -= 1;
         self.indent -= 1;
         self.write_line("}");
-}
+    }
 
     fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result {
         self.write_line(&format!("Assign({} :=)", expr.name));
@@ -147,7 +147,7 @@ impl Visitor for PrettyPrinter {
         self.indent -= 1;
         self.write_line("}");
     }
-    
+
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
         self.write_line("If {");
         self.indent += 1;
@@ -198,9 +198,12 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        self.write_line(&format!("For({} in", expr.var));
+        self.write_line(&format!("For({} in)", expr.var));
+        self.indent += 1;
+        self.write_line("iterable:");
         self.indent += 1;
         expr.iterable.accept(self);
+        self.indent -= 1;
         self.write_line("body:");
         self.indent += 1;
         expr.body.accept(self);

@@ -3,15 +3,20 @@ use crate::ast::*;
 use crate::error::CompilerError;
 use super::types::HulkType;
 use crate::error::Span;
+use std::collections::HashMap;
 
 pub struct TypeChecker {
     errors: Vec<CompilerError>,
+    scopes: Vec<HashMap<String, HulkType>>,
 }
 
 impl TypeChecker {
     pub fn new() -> Self {
+        let mut scopes = Vec::new();
+        scopes.push(HashMap::new()); // Scope global
         Self {
             errors: Vec::new(),
+            scopes,
         }
     }
 
@@ -26,6 +31,35 @@ impl TypeChecker {
 
     fn add_type_error(&mut self, msg: String, span: Span) {
         self.errors.push(CompilerError::TypeError { msg, span });
+    }
+
+    /// Crea un nuevo scope (ámbito de variables)
+    fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    /// Sale del scope actual
+    fn exit_scope(&mut self) {
+        if self.scopes.len() > 1 {
+            self.scopes.pop();
+        }
+    }
+
+    /// Declara una variable en el scope actual
+    fn declare_var(&mut self, name: String, ty: HulkType) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name, ty);
+        }
+    }
+
+    /// Busca una variable en los scopes (desde el más interno al global)
+    fn lookup_var(&self, name: &str) -> Option<HulkType> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(ty) = scope.get(name) {
+                return Some(ty.clone());
+            }
+        }
+        None
     }
 }
 
@@ -278,5 +312,157 @@ impl Visitor for TypeChecker {
         };
         expr.ty = Some(result_ty.clone());
         result_ty
+    }
+
+    fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
+        match self.lookup_var(&expr.name) {
+            Some(ty) => {
+                expr.ty = Some(ty.clone());
+                ty
+            }
+            None => {
+                self.add_type_error(
+                    format!("Undefined variable '{}'", expr.name),
+                    expr.span
+                );
+                let ty = HulkType::Error;
+                expr.ty = Some(ty.clone());
+                ty
+            }
+        }
+    }
+
+    fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
+        // Crear nuevo scope
+        self.enter_scope();
+
+        // Declarar cada binding
+        for (name, init_expr) in &mut expr.bindings {
+            let init_ty = init_expr.accept(self);
+            self.declare_var(name.clone(), init_ty);
+        }
+
+        // Evaluar el cuerpo en el nuevo scope
+        let body_ty = expr.body.accept(self);
+
+        // Salir del scope
+        self.exit_scope();
+
+        // El tipo del let es el tipo del cuerpo
+        expr.ty = Some(body_ty.clone());
+        body_ty
+    }
+
+    fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result {
+        // Buscar la variable
+        let var_ty = match self.lookup_var(&expr.name) {
+            Some(ty) => ty,
+            None => {
+                self.add_type_error(
+                    format!("Undefined variable '{}'", expr.name),
+                    expr.span
+                );
+                HulkType::Error
+            }
+        };
+
+        // Evaluar el valor asignado
+        let value_ty = expr.value.accept(self);
+
+        // Verificar compatibilidad de tipos
+        if var_ty != HulkType::Error && !value_ty.is_compatible_with(&var_ty) {
+            self.add_type_error(
+                format!("Cannot assign {:?} to variable of type {:?}", value_ty, var_ty),
+                expr.span
+            );
+        }
+
+        // El tipo de una asignación es el tipo del valor
+        expr.ty = Some(value_ty.clone());
+        value_ty
+    }
+
+    fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
+        // Entrar en nuevo scope
+        self.enter_scope();
+
+        let mut result_ty = HulkType::Number; // Por defecto
+
+        // Evaluar cada expresión en orden
+        for e in &mut expr.expressions {
+            result_ty = e.accept(self);
+        }
+
+        // Salir del scope
+        self.exit_scope();
+
+        // El tipo del bloque es el tipo de la última expresión
+        expr.ty = Some(result_ty.clone());
+        result_ty
+    }
+
+    fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
+        let cond_ty = expr.condition.accept(self);
+        if !cond_ty.is_compatible_with(&HulkType::Boolean) {
+            self.add_type_error(
+                "If condition must be Boolean".to_string(),
+                expr.condition.span(),
+            );
+        }
+
+        let then_ty = expr.then_branch.accept(self);
+        let else_ty = if let Some(else_branch) = &mut expr.else_branch {
+            else_branch.accept(self)
+        } else {
+            HulkType::Number
+        };
+
+        let result_ty = if then_ty.is_compatible_with(&else_ty) {
+            then_ty.clone()
+        } else {
+            self.add_type_error(
+                format!("If branches return incompatible types: {:?} vs {:?}", then_ty, else_ty),
+                expr.span,
+            );
+            HulkType::Error
+        };
+
+        expr.ty = Some(result_ty.clone());
+        result_ty
+    }
+
+    fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result {
+        let cond_ty = expr.condition.accept(self);
+        if !cond_ty.is_compatible_with(&HulkType::Boolean) {
+            self.add_type_error(
+                "While condition must be Boolean".to_string(),
+                expr.condition.span(),
+            );
+        }
+
+        self.enter_scope();
+        let body_ty = expr.body.accept(self);
+        self.exit_scope();
+
+        expr.ty = Some(HulkType::Number);
+        body_ty
+    }
+
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+        let iterable_ty = expr.iterable.accept(self);
+        if !iterable_ty.is_compatible_with(&HulkType::Object) && !iterable_ty.is_compatible_with(&HulkType::Number) {
+            self.add_type_error(
+                "For iterable must be a range or iterable object".to_string(),
+                expr.iterable.span(),
+            );
+        }
+
+        self.enter_scope();
+        self.declare_var(expr.var.clone(), HulkType::Number);
+        let body_ty = expr.body.accept(self);
+        self.exit_scope();
+
+        expr.ty = Some(body_ty.clone());
+        body_ty
     }
 }
