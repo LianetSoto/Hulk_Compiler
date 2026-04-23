@@ -38,6 +38,7 @@ pub enum Token {
     #[token("%")]  Percent,
 
     // revisar
+    #[token("=")]  Eq, 
     #[token(":=")] Assign,
     #[token("=>")] Arrow,
     #[token("==")] EqEq,
@@ -50,17 +51,21 @@ pub enum Token {
     #[token("|")]  Or,
     #[token("!")]  Not,
 
+
     // Constantes matemáticas
-    #[token("PI")] Pi,
-    #[token("E")]  E,
+    #[token("PI", priority = 3)] Pi,
+    #[token("E", priority = 3)]  E,
 
     // Funciones matemáticas built‑in
-    #[token("sin")]  Sin,
+    #[token("sin", priority = 3)]  Sin,
     #[token("cos")]  Cos,
     #[token("sqrt")] Sqrt,
     #[token("rand")] Rand,
     #[token("exp")] Exp,
     #[token("log")] Log,
+
+     // Identifiers
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())] Identifier(String),    
 
     // Regular expression patterns
     #[regex(r"[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
@@ -122,6 +127,8 @@ impl fmt::Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Concat => write!(f, "@"),
+            Token::Eq => write!(f, "="),
+            Token::Identifier(s) => write!(f, "{}", s),
             Token::Assign => write!(f, ":="),
             Token::Arrow => write!(f, "=>"),
             Token::EqEq => write!(f, "=="),
