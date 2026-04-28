@@ -282,7 +282,6 @@ pub struct WhileExpr {
     pub condition: Box<Expr>,
     pub body: Box<Expr>,
     pub span: Span,
-    pub ty: Option<HulkType>,
 }
 
 impl Node for WhileExpr {
@@ -297,7 +296,6 @@ pub struct ForExpr {
     pub iterable: Box<Expr>,
     pub body: Box<Expr>,
     pub span: Span,
-    pub ty: Option<HulkType>,
 }
 
 impl Node for ForExpr {
