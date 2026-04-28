@@ -18,15 +18,3 @@ impl Node for Stmt {
     }
 }
 
-// EXPR STMT (sentencia que contiene una expresión)
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExprStmt {
-    pub expr: Box<Expr>,
-    pub span: Span,
-}
-
-impl Node for ExprStmt {
-    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
-        visitor.visit_expr_stmt(self)
-    }
-}
