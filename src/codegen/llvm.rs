@@ -4,16 +4,14 @@ use inkwell::builder::Builder;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use std::collections::HashMap;
 use crate::semantic::HulkType;
-use crate::ast::{Node, Visitor, Program, ExprStmt, 
-    NumberExpr, BinaryOpExpr, PrintExpr, BinOp, StringExpr,
-    CallExpr, ConstExpr, UnaryOpExpr, BoolExpr, UnaryOp};
+use crate::ast::*;
 use crate::error::{CompilerError};
 
 pub struct LlvmCodeGen<'ctx> {
     context: &'ctx Context, 
     module: Module<'ctx>,
     builder: Builder<'ctx>,
-    named_values: HashMap<String, PointerValue<'ctx>>,
+    scopes: Vec<HashMap<String, PointerValue<'ctx>>>,
     current_function: Option<FunctionValue<'ctx>>,
 }
 
@@ -25,7 +23,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             context,
             module,
             builder,
-            named_values: HashMap::new(),
+            scopes: vec![HashMap::new()],
             current_function: None,
         }
     }
@@ -68,6 +66,39 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         let i32 = self.context.i32_type();
         let fn_type = i32.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
         self.module.add_function("strcmp", fn_type, None)
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn insert_var(&mut self, name: String, ptr: PointerValue<'ctx>) {
+        self.scopes.last_mut().unwrap().insert(name, ptr);
+    }
+
+    /// Look up a variable from inner‑most to outer‑most scope.
+    fn lookup_var(&self, name: &str) -> Option<PointerValue<'ctx>> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(&ptr) = scope.get(name) {
+                return Some(ptr);
+            }
+        }
+        None
+    }
+
+    /// Convert a HULK type to the corresponding LLVM type.
+    fn hulk_type_to_llvm_type(&self, ty: &HulkType) -> inkwell::types::BasicTypeEnum<'ctx> {
+        match ty {
+            HulkType::Number => self.context.f64_type().into(),
+            HulkType::String => self.context.i8_type()
+                .ptr_type(inkwell::AddressSpace::default()).into(),
+            HulkType::Boolean => self.context.bool_type().into(),
+            _ => self.context.f64_type().into(), // fallback for unknown types
+        }
     }
 
     /// Declares the external C library function `sin`.
@@ -780,5 +811,121 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             _ => unreachable!("ICE: unknown built‑in function '{}' escaped type checker", expr.func),
         }
     }
+
+    fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
+        // Introduce a new variable scope
+        self.push_scope();
+
+        // Process bindings left‑to‑right so later initializers can see earlier variables
+        for (name, init_expr) in &mut expr.bindings {
+            // Evaluate the initializer expression
+            let init_val = init_expr.accept(self)?;
+
+            // Determine the LLVM type from the inferred HULK type (stored in the AST node)
+            let hulk_ty = init_expr.get_type()
+                .ok_or_else(|| CompilerError::CodegenError {
+                    msg: "type not inferred for let binding".to_string(),
+                    span: Some(expr.span),
+                })?;
+            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+
+            // Allocate stack space for the variable
+            let alloca = self.builder.build_alloca(llvm_ty, &name)
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+
+            // Store the initial value
+            self.builder.build_store(alloca, init_val)
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+
+            // Register the variable in the current scope
+            self.insert_var(name.clone(), alloca);
+        }
+
+        // Generate code for the body of the let expression
+        let body_val = expr.body.accept(self)?;
+
+        // Remove the scope introduced by this let
+        self.pop_scope();
+
+        Ok(body_val)
+    }
+
+    fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
+        // Look up the variable in the scope stack
+        match self.lookup_var(&expr.name) {
+            Some(ptr) => {
+                // Determine the type to load (use the annotated HULK type)
+                let hulk_ty = expr.ty.as_ref().ok_or_else(|| CompilerError::CodegenError {
+                    msg: format!("type not inferred for variable '{}'", expr.name),
+                    span: Some(expr.span),
+                })?;
+                let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+
+                // Load the value from the pointer
+                let value = self.builder.build_load(llvm_ty, ptr, &expr.name)
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(value.into())
+            }
+            None => Err(CompilerError::CodegenError {
+                msg: format!("undefined variable '{}'", expr.name),
+                span: Some(expr.span),
+            }),
+        }
+    }
+
+    fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result {
+        // Look up the variable (TypeChecker already verified it exists)
+        match self.lookup_var(&expr.name) {
+            Some(ptr) => {
+                // Evaluate the right‑hand side
+                let new_val = expr.value.accept(self)?;
+
+                // Store the new value into the variable's location
+                self.builder.build_store(ptr, new_val)
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+
+                Ok(new_val)   // assignment returns the assigned value in HULK
+            }
+            None => Err(CompilerError::CodegenError {
+                msg: format!("cannot assign to undefined variable '{}'", expr.name),
+                span: Some(expr.span),
+            }),
+        }
+    }
+
+    fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
+
+        for e in &mut expr.expressions {
+            e.accept(self);
+        }
+
+        // Retornamos un valor dummy porque el visitor exige un BasicValueEnum.
+        Ok(self.context.f64_type().const_float(0.0).into()) 
         
+    }
+        
+    fn visit_for(&mut self, expr: &mut crate::ast::ForExpr) -> Self::Result {
+        todo!()
+    }
+
+    fn visit_if(&mut self, expr: &mut crate::ast::IfExpr) -> Self::Result {
+        todo!()
+    }
+
+    fn visit_while(&mut self, expr: &mut crate::ast::WhileExpr) -> Self::Result {
+        todo!()
+    }
+
 }
