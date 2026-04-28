@@ -383,8 +383,6 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
-        // Entrar en nuevo scope
-        self.enter_scope();
 
         let mut result_ty = HulkType::Number; // Por defecto
 
@@ -392,9 +390,6 @@ impl Visitor for TypeChecker {
         for e in &mut expr.expressions {
             result_ty = e.accept(self);
         }
-
-        // Salir del scope
-        self.exit_scope();
 
         // El tipo del bloque es el tipo de la última expresión
         expr.ty = Some(result_ty.clone());
@@ -444,7 +439,6 @@ impl Visitor for TypeChecker {
         let body_ty = expr.body.accept(self);
         self.exit_scope();
 
-        expr.ty = Some(HulkType::Number);
         body_ty
     }
 
@@ -462,7 +456,6 @@ impl Visitor for TypeChecker {
         let body_ty = expr.body.accept(self);
         self.exit_scope();
 
-        expr.ty = Some(body_ty.clone());
         body_ty
     }
 }
