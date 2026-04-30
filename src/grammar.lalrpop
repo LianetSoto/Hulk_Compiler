@@ -154,7 +154,7 @@ LetBindings: Vec<(String, Box<Expr>)> = {
 };
 
 Binding: (String, Box<Expr>) = {
-    <id:"identifier"> "=" <e:LogicalOrExpr> => (id, e)
+    <id:"identifier"> "=" <e:Expr> => (id, e)
 };
 
 //Destructive assignment (:=)
