@@ -439,6 +439,7 @@ impl Visitor for TypeChecker {
         let body_ty = expr.body.accept(self);
         self.exit_scope();
 
+        expr.ty = Some(HulkType::Number);
         body_ty
     }
 
@@ -456,6 +457,7 @@ impl Visitor for TypeChecker {
         let body_ty = expr.body.accept(self);
         self.exit_scope();
 
+        expr.ty = Some(HulkType::Number);
         body_ty
     }
 }
