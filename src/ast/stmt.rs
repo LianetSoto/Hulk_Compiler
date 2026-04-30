@@ -5,15 +5,17 @@ use crate::error::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Expr(ExprStmt),
-    // Futuras: Let(LetStmt), If(IfStmt), While(WhileStmt), ...
 }
-
+#[derive(Debug, Clone, PartialEq)]
+pub struct  ExprStmt{
+    pub expr: Box<Expr>,
+    pub span: Span,
+}
 // IMPLEMENTACIÓN DE Node PARA LOS ENUMS PRINCIPALES
 impl Node for Stmt {
     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         match self {
-            Stmt::Expr(s) => s.accept(visitor),
-            // Stmt::Let(l) => l.accept(visitor), // cuando se añada
+            Stmt::Expr(s) => s.expr.accept(visitor),
         }
     }
 }
