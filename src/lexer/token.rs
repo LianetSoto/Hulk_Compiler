@@ -57,12 +57,12 @@ pub enum Token {
     #[token("E", priority = 3)]  E,
 
     // Funciones matemáticas built‑in
-    #[token("sin", priority = 3)]  Sin,
-    #[token("cos")]  Cos,
-    #[token("sqrt")] Sqrt,
-    #[token("rand")] Rand,
-    #[token("exp")] Exp,
-    #[token("log")] Log,
+    // #[token("sin", priority = 3)]  Sin,
+    // #[token("cos")]  Cos,
+    // #[token("sqrt")] Sqrt,
+    // #[token("rand")] Rand,
+    // #[token("exp")] Exp,
+    // #[token("log")] Log,
 
      // Identifiers
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())] Identifier(String),    
@@ -142,12 +142,12 @@ impl fmt::Display for Token {
             Token::Not => write!(f, "!"),
             Token::Pi => write!(f, "PI"),
             Token::E  => write!(f, "E"),
-            Token::Sin => write!(f, "sin"),
-            Token::Cos => write!(f, "cos"),
-            Token::Sqrt => write!(f, "sqrt"),
-            Token::Rand => write!(f, "rand"),
-            Token::Log => write!(f,"log"),
-            Token::Exp => write!(f,"exp"),
+            // Token::Sin => write!(f, "sin"),
+            // Token::Cos => write!(f, "cos"),
+            // Token::Sqrt => write!(f, "sqrt"),
+            // Token::Rand => write!(f, "rand"),
+            // Token::Log => write!(f,"log"),
+            // Token::Exp => write!(f,"exp"),
             Token::Number(v) => write!(f, "{}", v),
             Token::String(s) => write!(f, "\"{}\"", s),
         }
