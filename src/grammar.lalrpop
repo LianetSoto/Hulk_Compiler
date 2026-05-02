@@ -29,6 +29,7 @@ extern {
         "let"    => Token::Let,
         "in"     => Token::In,
         "@" => Token::Concat,
+        "@@" => Token::ConcatSpace,
         "PI" => Token::Pi,
         "E" => Token::E,
         "true"  => Token::True,
@@ -291,6 +292,13 @@ AddSubExpr: Box<Expr> = {
     <start:@L> <l:AddSubExpr> "@" <r:MulDivExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Concat,
+        right: r,
+        span: Span::new(start, end),
+        ty: None,
+    })),
+    <start:@L> <l:AddSubExpr> "@@" <r:MulDivExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+        left: l,
+        op: BinOp::ConcatSpace,
         right: r,
         span: Span::new(start, end),
         ty: None,

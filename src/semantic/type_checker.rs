@@ -104,7 +104,7 @@ impl Visitor for TypeChecker {
                 HulkType::Number
             }
 
-            BinOp::Concat => {
+            BinOp::Concat | BinOp::ConcatSpace => {
                 let left_ok = left_type.is_compatible_with(&HulkType::String) ||
                             left_type.is_compatible_with(&HulkType::Number);
                 let right_ok = right_type.is_compatible_with(&HulkType::String) ||

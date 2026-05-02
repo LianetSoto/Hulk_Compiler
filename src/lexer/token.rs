@@ -35,6 +35,7 @@ pub enum Token {
     #[token(":")]  Colon,
     #[token(";")]  Semicolon,
     #[token("@")]  Concat,
+    #[token("@@")] ConcatSpace,
     #[token("%")]  Percent,
 
     // revisar
@@ -127,6 +128,7 @@ impl fmt::Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Concat => write!(f, "@"),
+            Token::ConcatSpace => write!(f, "@@"),
             Token::Eq => write!(f, "="),
             Token::Identifier(s) => write!(f, "{}", s),
             Token::Assign => write!(f, ":="),

@@ -104,7 +104,7 @@ impl Node for NumberExpr {
 pub enum BinOp {
     Add, Sub, Mul, Div, Pow, Concat, 
     Eq, Neq, Lt, Gt, Leq, Geq,
-    And, Or, Mod,
+    And, Or, Mod, ConcatSpace,
 }
 
 // BINARY OP EXPR (operación binaria)
