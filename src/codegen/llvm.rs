@@ -141,6 +141,12 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         self.declare_math_function("log")
     }
 
+    /// Declares the C standard library function `fmod` (floating‑point remainder).
+    /// Signature: `double @fmod(double, double)`
+    pub(crate) fn declare_fmod(&self) -> FunctionValue<'ctx> {
+        self.declare_math_function("fmod")
+    }
+
     /// Declares `void @srand(i32)`.
     pub(crate) fn declare_srand(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("srand") {
