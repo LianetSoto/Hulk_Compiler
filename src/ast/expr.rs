@@ -15,7 +15,7 @@ pub enum Expr {
     UnaryOp(UnaryOpExpr),
     Variable(VariableExpr),
     Let(LetExpr),
-    Assign(AssignExpr),
+    DestructiveAssign(DestructiveAssignExpr),
     Block(BlockExpr),
     If(IfExpr),
     While(WhileExpr),
@@ -35,7 +35,7 @@ impl Expr {
             Expr::UnaryOp(u) => u.span,
             Expr::Variable(v) => v.span,
             Expr::Let(l) => l.span,
-            Expr::Assign(a) => a.span,
+            Expr::DestructiveAssign(a) => a.span,
             Expr::Block(b) => b.span,
             Expr::If(i) => i.span,
             Expr::While(w) => w.span,
@@ -55,7 +55,7 @@ impl Expr {
             Expr::UnaryOp(u) => u.ty.as_ref(),
             Expr::Variable(v) => v.ty.as_ref(),
             Expr::Let(l) => l.ty.as_ref(),
-            Expr::Assign(a) => a.ty.as_ref(),
+            Expr::DestructiveAssign(a) => a.ty.as_ref(),
             Expr::Block(b) => b.ty.as_ref(),
             Expr::If(i) => i.ty.as_ref(),
             Expr::While(w) => w.ty.as_ref(),
@@ -77,7 +77,7 @@ impl Node for Expr {
             Expr::UnaryOp(unary_op_expr) => unary_op_expr.accept(visitor),
             Expr::Variable(v) => v.accept(visitor),
             Expr::Let(l) => l.accept(visitor),
-            Expr::Assign(a) => a.accept(visitor),
+            Expr::DestructiveAssign(a) => a.accept(visitor),
             Expr::Block(b) => b.accept(visitor),
             Expr::If(i) => i.accept(visitor),
             Expr::While(w) => w.accept(visitor),
@@ -235,14 +235,14 @@ impl Node for LetExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AssignExpr {
+pub struct DestructiveAssignExpr {
     pub name: String,
     pub value: Box<Expr>,
     pub span: Span,
     pub ty: Option<HulkType>,
 }
 
-impl Node for AssignExpr {
+impl Node for DestructiveAssignExpr {
     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         visitor.visit_assign(self)
     }
@@ -266,7 +266,7 @@ pub struct IfExpr {
     pub condition: Box<Expr>,
     pub then_branch: Box<Expr>,
     pub elif_branches: Vec<(Box<Expr>, Box<Expr>)>, // (condition, body)
-    pub else_branch: Option<Box<Expr>>,
+    pub else_branch: Box<Expr>,
     pub span: Span,
     pub ty: Option<HulkType>,
 }

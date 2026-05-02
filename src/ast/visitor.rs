@@ -1,4 +1,4 @@
-use crate::ast::{Program, ExprStmt, NumberExpr, BinaryOpExpr, PrintExpr, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, VariableExpr, LetExpr, AssignExpr, BlockExpr, IfExpr, WhileExpr, ForExpr};
+use crate::ast::*;
 
 pub trait Visitor {
     
@@ -17,7 +17,7 @@ pub trait Visitor {
     fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result;
     fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result;
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result;
-    fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result;
+    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result;
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result;
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result;
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result;
