@@ -1,4 +1,4 @@
-use crate::ast::{AssignExpr, BinaryOpExpr, BlockExpr, BoolExpr, CallExpr, ConstExpr, ExprStmt, ForExpr, IfExpr, LetExpr, Node, NumberExpr, PrintExpr, Program, StringExpr, UnaryOp, UnaryOpExpr, VariableExpr, Visitor, WhileExpr};
+use crate::ast::*;
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -131,7 +131,7 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result {
+    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
         self.write_line(&format!("Assign({} :=)", expr.name));
         self.indent += 1;
         expr.value.accept(self);
@@ -172,12 +172,10 @@ impl Visitor for PrettyPrinter {
             self.indent -= 1;
             self.indent -= 1;
         }
-        if let Some(else_expr) = &mut expr.else_branch {
-            self.write_line("else:");
-            self.indent += 1;
-            else_expr.accept(self);
-            self.indent -= 1;
-        }
+        self.write_line("else:");
+        self.indent += 1;
+        expr.else_branch.accept(self);
+        self.indent -= 1;
         self.indent -= 1;
         self.write_line("}");
     }

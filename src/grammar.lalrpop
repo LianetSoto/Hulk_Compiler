@@ -1,4 +1,4 @@
-use crate::ast::{Expr, NumberExpr, BinaryOpExpr, BinOp, PrintExpr, Stmt, ExprStmt, Program, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp, VariableExpr, LetExpr, AssignExpr, BlockExpr, IfExpr, WhileExpr, ForExpr};
+use crate::ast::*;
 use crate::lexer::Token;
 use crate::error::CompilerError;
 use crate::error::Span;
@@ -105,7 +105,7 @@ Expr: Box<Expr> = {
 
 SimpleExpr: Box<Expr> = {
     <e:LetExpr> => e,
-    <e:AssignExpr> => e,
+    <e:DestructiveAssignExpr> => e,
     <e:IfExpr> => e,
     <e:WhileExpr> => e,
     <e:ForExpr> => e,
@@ -158,9 +158,9 @@ Binding: (String, Box<Expr>) = {
 };
 
 //Destructive assignment (:=)
-AssignExpr: Box<Expr> = {
+DestructiveAssignExpr: Box<Expr> = {
     <start:@L> <id:"identifier"> ":=" <rhs:LogicalOrExpr> <end:@R> => {
-        Box::new(Expr::Assign(AssignExpr {
+        Box::new(Expr::DestructiveAssign(DestructiveAssignExpr {
             name: id,
             value: rhs,
             span: Span::new(start, end),
@@ -180,7 +180,7 @@ IfExpr: Box<Expr> = {
             condition: cond,
             then_branch: then,
             elif_branches: elif_branches,
-            else_branch: Some(else_branch),
+            else_branch: else_branch,
             span: Span::new(start, end),
             ty: None,
         }))

@@ -184,7 +184,7 @@ impl Visitor for TypeChecker {
                 expr.argument.span()
             );
         }
-        let ty = HulkType::Number; // print return Number
+        let ty = arg_type; 
         expr.ty = Some(ty.clone());
         ty
     }
@@ -353,7 +353,7 @@ impl Visitor for TypeChecker {
         body_ty
     }
 
-    fn visit_assign(&mut self, expr: &mut AssignExpr) -> Self::Result {
+    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
         // Buscar la variable
         let var_ty = match self.lookup_var(&expr.name) {
             Some(ty) => ty,
@@ -406,11 +406,7 @@ impl Visitor for TypeChecker {
         }
 
         let then_ty = expr.then_branch.accept(self);
-        let else_ty = if let Some(else_branch) = &mut expr.else_branch {
-            else_branch.accept(self)
-        } else {
-            HulkType::Number
-        };
+        let else_ty = expr.else_branch.accept(self);
 
         let result_ty = if then_ty.is_compatible_with(&else_ty) {
             then_ty.clone()
@@ -435,11 +431,9 @@ impl Visitor for TypeChecker {
             );
         }
 
-        self.enter_scope();
         let body_ty = expr.body.accept(self);
-        self.exit_scope();
 
-        expr.ty = Some(HulkType::Number);
+        expr.ty = Some(body_ty.clone());
         body_ty
     }
 
@@ -452,12 +446,10 @@ impl Visitor for TypeChecker {
             );
         }
 
-        self.enter_scope();
         self.declare_var(expr.var.clone(), HulkType::Number);
         let body_ty = expr.body.accept(self);
-        self.exit_scope();
 
-        expr.ty = Some(HulkType::Number);
+        expr.ty = Some(body_ty.clone());
         body_ty
     }
 }
