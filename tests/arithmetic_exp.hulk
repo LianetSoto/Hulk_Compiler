@@ -1,1 +1,39 @@
-print((3+4)*2^1 + 0.3);
+// Test: arithmetic expressions
+
+print((((1 + 2) ^ 3) * 4) / 5);
+
+// --- Basic operations ---
+print(2 + 3);           // 5
+print(10 - 7);          // 3
+print(4 * 5);           // 20
+print(20 / 3);          // 6.666667 (approx)
+print(2 ^ 10);          // 1024
+print(17 % 5);          // 2
+print(- (3 + 2));       // -5 (unary minus)
+
+// --- Operator precedence ---
+print(2 + 3 * 4);       // 14   (multiplication before addition)
+print((2 + 3) * 4);     // 20   (parentheses override)
+print(2 ^ 3 / 4);       // 2    (power before division: 8/4 = 2)
+print(2 ^ (3 / 4));     // 1.68179    (parentheses: 2^0.75)
+print(3 + 4 * 2 / (1 - 5) ^ 2); // 3.5 (complex precedence)
+
+// --- Modulo with floating numbers ---
+print(5.5 % 2.3);       // 0.9 (approx)
+print(10.0 % 3.0);      // 1
+
+// --- Combined expressions ---
+print(sin(PI / 6) ^ 2 + cos(PI / 6) ^ 2); // 1 (trig identity)
+print(sqrt(25) + exp(1)); // 5 + 2.718282 = 7.71828
+print(log(2, 32));      // 5  (log2(32) = 5)
+
+// --- Using constants ---
+print(PI * 2);          // 6.28319
+print(E ^ 2);           // 7.38906
+
+// --- Negative numbers ---
+let neg = - 10 in print(neg);          // -10
+let neg_expr = 5 * - 3 in print(neg_expr); // -15
+
+// --- Power associativity (right‑associative) ---
+print(2 ^ 3 ^ 2);       // 512  (2 ^ (3 ^ 2) = 2 ^ 9)
