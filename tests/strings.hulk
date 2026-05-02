@@ -1,0 +1,42 @@
+
+// Test: string literals, escaping, concatenation (@ and @@)
+
+// 1. Simple string literal
+print("Hello World");
+print(" ");
+
+// 2. Escaped double-quote inside string
+print("The message is \"Hello World\"");
+print(" ");
+
+// 3. Escape sequences: newline and tab
+print("Line1\nLine2");
+print("Col1\tCol2");
+print(" ");
+
+// 4. Concatenation with @ (string + string)
+print("Hello " @ "World");
+print(" ");
+
+// 5. Concatenation with @ (string + number)
+print("The meaning of life is " @ 42);
+print(" ");
+
+// 6. Concatenation with @ (number + string)
+print(3.14 @ " is approximately PI");
+print(" ");
+
+// 7. Concatenation with @@ (string @@ string)
+print("Hello" @@ "World");
+print(" ");
+
+// 8. Concatenation with @@ (string @@ number)
+print("Value:" @@ 42);
+print(" ");
+
+// 9. Multiple concatenations in one expression
+print("a" @ "b" @ "c");
+print(" ");
+
+// 10. Mixed @ and @@
+print("Hello" @@ "World" @ "!");
