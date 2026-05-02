@@ -272,6 +272,25 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 Ok(result)
             }
 
+            BinOp::Mod => {
+                let lhs = lhs_val.into_float_value();
+                let rhs = rhs_val.into_float_value();
+
+                let fmod_fn = self.declare_fmod();
+                let call_site = self.builder
+                    .build_call(fmod_fn, &[lhs.into(), rhs.into()], "modtmp")
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: e.to_string(),
+                        span: Some(expr.span),
+                    })?;
+                let result = call_site.try_as_basic_value().left()
+                    .ok_or_else(|| CompilerError::CodegenError {
+                        msg: "fmod call did not return a value".to_string(),
+                        span: Some(expr.span),
+                    })?;
+                Ok(result.into())
+            }
+
             // Comparison operators (expect Number, return Boolean)
             
             BinOp::Lt | BinOp::Gt | BinOp::Leq  | BinOp::Geq => {
@@ -417,8 +436,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 let result_ptr = self.concat_strings(lhs_val, rhs_val, sep, expr.span)?;
                 Ok(result_ptr.into())
             }
-
-            BinOp::Mod => todo!()
 
         }
     }
