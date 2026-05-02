@@ -16,7 +16,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
 
-        // Seed the random number generator ← una sola línea
+        // Seed the random number generator 
         self.seed_random_generator()?;
 
        
@@ -103,7 +103,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
     /// # Supported Types and Output Format
     /// - `String`   → printed as plain text followed by a newline (`%s\n`).
-    /// - `Number`   → printed as a floating‑point number followed by a newline (`%f\n`).
+    /// - `Number`   → printed as a floating‑point number followed by a newline (`%g\n`).
     /// - `Boolean`  → printed as the word `true` or `false` followed by a newline (`%s\n`).
     
     // # LLVM Concepts Used
@@ -138,8 +138,8 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             // 4a. Create (or reuse) a global constant for the format string "%s\n".
             HulkType::String | HulkType::Boolean => self.builder.build_global_string_ptr("%s\n", "fmt_str"),
 
-            // 4b. Create a global constant for the format string `"%f\n"`.
-            HulkType::Number => self.builder.build_global_string_ptr("%f\n", "fmt_num"),
+            // 4b. Create a global constant for the format string `"%g\n"`.
+            HulkType::Number => self.builder.build_global_string_ptr("%g\n", "fmt_num"),
 
             // Otherwise
             _ => return Err(CompilerError::CodegenError {
@@ -408,11 +408,18 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
             }
 
-            BinOp::Concat => Err(CompilerError::CodegenError {
-                msg: "Not yet implemented".to_string(),
-                span: Some(expr.span),
-            }),
-            BinOp::Mod => todo!(),
+            BinOp::Concat | BinOp::ConcatSpace=> {
+                let sep = if let BinOp::ConcatSpace = expr.op {
+                    Some(" ")
+                } else {
+                    None
+                };
+                let result_ptr = self.concat_strings(lhs_val, rhs_val, sep, expr.span)?;
+                Ok(result_ptr.into())
+            }
+
+            BinOp::Mod => todo!()
+
         }
     }
 
