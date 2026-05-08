@@ -2,6 +2,7 @@ use crate::error::{CompilerError, SourceMap, report_error};
 use crate::parser::parse_program;
 use crate::semantic::TypeChecker;
 use crate::codegen::LlvmCodeGen;
+use crate::gen_lex::lexer::build_lexer;
 use inkwell::context::Context;
 use std::process::Command;
 use std::process;
@@ -16,8 +17,74 @@ use std::process;
 pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str) -> Result<(), CompilerError> {
     let source_map = SourceMap::new(source_code.to_string());
 
+    let patterns = vec![
+        // --- Palabras Reservadas ---
+        ("Let", "let"),
+        ("In", "in"),
+        ("If", "if"),
+        ("Else", "else"),
+        ("Elif", "elif"),
+        ("While", "while"),
+        ("For", "for"),
+        ("Function", "function"),
+        ("Print", "print"),
+        ("True", "true"),
+        ("False", "false"),
+        ("Pi", "PI"),
+        ("E", "E"),
+        ("Sin", "sin"),
+        ("Cos", "cos"),
+        ("Tan", "tan"),
+        ("Sqrt", "sqrt"),
+        ("Log", "log"),
+        ("Exp", "exp"),
+        ("Rand", "rand"),
+
+        // --- Multi-char operators (longest match first) ---
+        ("Arrow", "=>"),
+        ("Eq", "="),
+        ("Assign", ":="),
+        ("EqEq", "=="),
+        ("Neq", "!="),
+        ("Leq", "<="),
+        ("Geq", ">="),
+
+        // --- Single-char operators ---
+        ("Lt", "<"),
+        ("Gt", ">"),
+        ("And", "&"),
+        ("Or", "|"),
+        ("Not", "!"),
+        ("Plus", "+"),
+        ("Minus", "-"),
+        ("Mult", "*"),
+        ("Div", "/"),
+        ("Percent", "%"),
+        ("Power", "^"),
+        
+        // --- Símbolos de Puntuación ---
+        ("LParen", "("),
+        ("RParen", ")"),
+        ("LBrace", "{"),
+        ("RBrace", "}"),
+        ("Comma", ","),
+        ("Semicolon", ";"),
+        ("COLON", ":"),
+
+        // --- Literales Complejos ---
+        // Los números y los identificadores se tokenizan directamente en el lexer.
+
+    ];
+
+    let lexer = build_lexer(patterns);
+    let tokens = lexer.tokenize(source_code);
+    for (i, token) in tokens.iter().enumerate() {
+        if token.0 >= 330 && token.0 <= 360 {
+            println!("TOKEN {}: {:?}", i, token);
+        }
+    }
     // 1. Syntactic analysis (parsing)
-    let mut ast = match parse_program(source_code) {
+    let mut ast = match parse_program(tokens) {
         Ok(prog) => prog,
         Err(e) => {
             report_error(&e, &source_map, filename);

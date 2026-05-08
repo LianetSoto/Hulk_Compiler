@@ -1,101 +1,77 @@
-use logos::Logos;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Logos)]
-#[logos(skip r"[ \t\n\f]+", skip r"//[^\n]*\n?")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
 
     // Keywords
-    #[token("print")] Print,
-    #[token("function")] Function,
-    #[token("let")] Let,
-    #[token("in")] In,
-    #[token("if")] If,
-    #[token("else")] Else,
-    #[token("elif")] Elif,
-    #[token("while")] While,
-    #[token("for")] For,
-    #[token("true")] True,
-    #[token("false")] False,
+    Print,
+    Function,
+    Let,
+    In,
+    If,
+    Else,
+    Elif,
+    While,
+    For,
+    True,
+    False,
 
     // 
-    #[token("(")]  LParen,
-    #[token(")")]  RParen,
-    #[token("{")]  LBrace,
-    #[token("}")]  RBrace,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
 
     // Operators 
-    #[token("+")]  Plus,
-    #[token("-")]  Minus,
-    #[token("*")]  Mult,
-    #[token("/")]  Div,
-    #[token("^")]  Power,
-    #[token(".")]  Dot,
-    #[token(",")]  Comma,
-    #[token(":")]  Colon,
-    #[token(";")]  Semicolon,
-    #[token("@")]  Concat,
-    #[token("@@")] ConcatSpace,
-    #[token("%")]  Percent,
+    Plus,
+    Minus,
+    Mult,
+    Div,
+    Power,
+    Dot,
+    Comma,
+    Colon,
+    Semicolon,
+    Concat,
+    ConcatSpace,
+    Percent,
 
     // revisar
-    #[token("=")]  Eq, 
-    #[token(":=")] Assign,
-    #[token("=>")] Arrow,
-    #[token("==")] EqEq,
-    #[token("!=")] Neq,
-    #[token("<")]  Lt,
-    #[token(">")]  Gt,
-    #[token("<=")] Leq,
-    #[token(">=")] Geq,
-    #[token("&")]  And,
-    #[token("|")]  Or,
-    #[token("!")]  Not,
+    Eq, 
+    Assign,
+    Arrow,
+    EqEq,
+    Neq,
+    Lt,
+    Gt,
+    Leq,
+    Geq,
+    And,
+    Or,
+    Not,
 
 
     // Constantes matemáticas
-    #[token("PI", priority = 3)] Pi,
-    #[token("E", priority = 3)]  E,
+    Pi,
+    E,
 
     // Funciones matemáticas built‑in
-    // #[token("sin", priority = 3)]  Sin,
-    // #[token("cos")]  Cos,
-    // #[token("sqrt")] Sqrt,
-    // #[token("rand")] Rand,
-    // #[token("exp")] Exp,
-    // #[token("log")] Log,
+    Sin,
+    Cos,
+    Tan,
+    Sqrt,
+    Log,
+    Exp,
+    Rand,
 
      // Identifiers
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())] Identifier(String),    
+    Identifier(String),    
 
     // Regular expression patterns
-    #[regex(r"[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
     Number(f64),
 
     // Cadenas con escapes básicos
-    #[regex(r#""([^"\\]|\\.)*""#, |lex| {
-        let s = lex.slice();
-        // Quitar las comillas dobles del principio y final
-        let inner = &s[1..s.len()-1];
-        let mut result = String::new();
-        let mut chars = inner.chars();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('n') => result.push('\n'),
-                    Some('t') => result.push('\t'),
-                    Some('"') => result.push('"'),
-                    Some('\\') => result.push('\\'),
-                    Some(c) => result.push(c),
-                    None => result.push('\\'),
-                }
-            } else {
-                result.push(c);
-            }
-        }
-        result
-    })]
-    String(String),
+    Str(String),
 }
 
 // Implementación de Display para errores bonitos
@@ -144,14 +120,15 @@ impl fmt::Display for Token {
             Token::Not => write!(f, "!"),
             Token::Pi => write!(f, "PI"),
             Token::E  => write!(f, "E"),
-            // Token::Sin => write!(f, "sin"),
-            // Token::Cos => write!(f, "cos"),
-            // Token::Sqrt => write!(f, "sqrt"),
-            // Token::Rand => write!(f, "rand"),
-            // Token::Log => write!(f,"log"),
-            // Token::Exp => write!(f,"exp"),
+            Token::Sin => write!(f, "sin"),
+            Token::Cos => write!(f, "cos"),
+            Token::Tan => write!(f, "tan"),
+            Token::Sqrt => write!(f, "sqrt"),
+            Token::Log => write!(f, "log"),
+            Token::Exp => write!(f, "exp"),
+            Token::Rand => write!(f, "rand"),
             Token::Number(v) => write!(f, "{}", v),
-            Token::String(s) => write!(f, "\"{}\"", s),
+            Token::Str(s) => write!(f, "\"{}\"", s),
         }
     }
 }
