@@ -6,6 +6,7 @@ mod error;
 mod semantic;
 mod codegen;
 mod compiler;
+mod gen_lex;
 
 use compiler::compile;
 use std::fs;
