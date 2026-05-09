@@ -265,8 +265,7 @@ impl Node for BlockExpr {
 pub struct IfExpr {
     pub condition: Box<Expr>,
     pub then_branch: Box<Expr>,
-    pub elif_branches: Vec<(Box<Expr>, Box<Expr>)>, // (condition, body)
-    pub else_branch: Box<Expr>,
+    pub else_branch: Box<Expr>,   // now mandatory, always present
     pub span: Span,
     pub ty: Option<HulkType>,
 }

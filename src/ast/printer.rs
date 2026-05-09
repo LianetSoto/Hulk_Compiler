@@ -159,19 +159,6 @@ impl Visitor for PrettyPrinter {
         self.indent += 1;
         expr.then_branch.accept(self);
         self.indent -= 1;
-        for (i, (cond, body)) in expr.elif_branches.iter_mut().enumerate() {
-            self.write_line(&format!("elif_{}:", i));
-            self.indent += 1;
-            self.write_line("condition:");
-            self.indent += 1;
-            cond.accept(self);
-            self.indent -= 1;
-            self.write_line("body:");
-            self.indent += 1;
-            body.accept(self);
-            self.indent -= 1;
-            self.indent -= 1;
-        }
         self.write_line("else:");
         self.indent += 1;
         expr.else_branch.accept(self);
