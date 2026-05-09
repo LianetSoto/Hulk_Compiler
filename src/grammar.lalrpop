@@ -25,7 +25,7 @@ extern {
         ";"      => Token::Semicolon,
         ","      => Token::Comma,
         "print"  => Token::Print,
-        "string" => Token::String(<String>),
+        "string" => Token::Str(<String>),
         "let"    => Token::Let,
         "in"     => Token::In,
         "@" => Token::Concat,
@@ -170,12 +170,23 @@ Elif: (Box<Expr>, Box<Expr>) = {
 };
 
 IfExpr: Box<Expr> = {
-    <start:@L> "if" "(" <cond:Expr> ")" <then:Expr> <elif_branches:Elif*> "else" <else_branch:Expr> <end:@R> => {
+    <start:@L> "if" "(" <cond:Expr> ")" <then:Expr>
+    <elifs:Elif*> "else" <else_branch:Expr> <end:@R> => {
+        let mut result = else_branch;
+        // Cambia iter() por into_iter() y toma los valores directamente
+        for (elif_cond, elif_body) in elifs.into_iter().rev() {
+            result = Box::new(Expr::If(IfExpr {
+                condition: elif_cond,
+                then_branch: elif_body,
+                else_branch: result,
+                span: Span::new(start, end),
+                ty: None,
+            }));
+        }
         Box::new(Expr::If(IfExpr {
             condition: cond,
             then_branch: then,
-            elif_branches: elif_branches,
-            else_branch: else_branch,
+            else_branch: result,
             span: Span::new(start, end),
             ty: None,
         }))

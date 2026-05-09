@@ -24,7 +24,7 @@ fn main() {
         process::exit(1);
     });
 
-    if let Err(e) = compile(&source, "output.ll", true, filename) {
+    if let Err(e) = compile(&source, "output.ll", true, filename,true) {
         process::exit(1);
     }
 }

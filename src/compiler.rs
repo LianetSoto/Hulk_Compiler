@@ -3,6 +3,7 @@ use crate::parser::parse_program;
 use crate::semantic::TypeChecker;
 use crate::codegen::LlvmCodeGen;
 use crate::gen_lex::lexer::build_lexer;
+use crate::ast::{PrettyPrinter, Node};          // <-- NUEVA IMPORTACIÓN
 use inkwell::context::Context;
 use std::process::Command;
 use std::process;
@@ -14,7 +15,8 @@ use std::process;
 /// * `output_ir` - Path where the LLVM IR file will be written.
 /// * `execute` - Whether to compile the IR to an executable and run it.
 /// * `filename` - The name of the source file (used for error reporting).
-pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str) -> Result<(), CompilerError> {
+/// * `print_ast` - If true, prints the Abstract Syntax Tree after parsing.
+pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str, print_ast: bool) -> Result<(), CompilerError> {
     let source_map = SourceMap::new(source_code.to_string());
 
     let patterns = vec![
@@ -73,7 +75,6 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
         // --- Literales Complejos ---
         // Los números y los identificadores se tokenizan directamente en el lexer.
-
     ];
 
     let lexer = build_lexer(patterns);
@@ -91,6 +92,13 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
             process::exit(1);
         }
     };
+
+    // ---- IMPRESIÓN DEL AST (SI SE SOLICITA) ----
+    if print_ast {
+        let mut printer = PrettyPrinter::new();
+        ast.accept(&mut printer);
+        println!("=== Abstract Syntax Tree ===\n{}", printer.into_string());
+    }
 
     // 2. Semantic analysis (type checking)
     let mut type_checker = TypeChecker::new();
