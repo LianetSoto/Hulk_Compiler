@@ -794,12 +794,84 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(result.into())
     }
-    
-    fn visit_if(&mut self, expr: &mut crate::ast::IfExpr) -> Self::Result {
-        todo!()
-    }
         
-    fn visit_for(&mut self, expr: &mut crate::ast::ForExpr) -> Self::Result {
+    /// Generates LLVM IR for an `if` expression.
+    ///
+    /// HULK `if` is an expression, so it produces a value.  Both branches
+    /// (`then` and `else`) are mandatory.  The `elif` construct is desugared
+    /// by the parser into nested `if` expressions, therefore this method only
+    /// needs to handle a simple `if‑else`.
+    fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
+        // 1. Retrieve the HULK type inferred by the TypeChecker and convert
+        //    it to the corresponding LLVM type (f64, i8*, i1, etc.).
+        let hulk_ty = expr.ty.as_ref().ok_or_else(|| CompilerError::CodegenError {
+            msg: "type not inferred for if expression".to_string(),
+            span: Some(expr.span),
+        })?;
+        let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty); // returns BasicTypeEnum
+
+        // 2. Create the basic blocks that form the control‑flow skeleton.
+        let then_block = self.context.append_basic_block(
+            self.current_function.unwrap(), "if.then");
+        let else_block = self.context.append_basic_block(
+            self.current_function.unwrap(), "if.else");
+        let merge_block = self.context.append_basic_block(
+            self.current_function.unwrap(), "if.merge");
+
+        // 3. Evaluate the condition and emit a conditional branch.
+        let cond_val = expr.condition.accept(self)?;
+        let cond_i1 = cond_val.into_int_value();
+        self.builder.build_conditional_branch(cond_i1, then_block, else_block)
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // 4. "then" branch
+        self.builder.position_at_end(then_block);
+        let then_val = expr.then_branch.accept(self)?;
+        // Capture the actual block that contains the then body. We store it so we
+        // can feed the phi node later.
+        let then_block_phi = self.builder.get_insert_block().unwrap();
+
+        // Jump to the merge point.
+        self.builder.build_unconditional_branch(merge_block)
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // 5. "else" branch
+        self.builder.position_at_end(else_block);
+        let else_val = expr.else_branch.accept(self)?;
+        let else_block_phi = self.builder.get_insert_block().unwrap(); // analogous to then
+        self.builder.build_unconditional_branch(merge_block)
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // 6. Merge block – build the phi instruction.
+        //    A phi node selects a value depending on which basic block we
+        //    came from.  We add one entry for each predecessor:
+        //      - (then_val, then_block_phi)
+        //      - (else_val, else_block_phi)
+        self.builder.position_at_end(merge_block);
+        let phi = self.builder.build_phi(llvm_ty, "if.phi")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        phi.add_incoming(&[
+            (&then_val, then_block_phi),
+            (&else_val, else_block_phi),
+        ]);
+
+        Ok(phi.as_basic_value().into())
+    }   
+       
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
         todo!()
     }
 
