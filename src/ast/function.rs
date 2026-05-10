@@ -7,6 +7,7 @@ pub struct FunctionDef {
     pub name: String,
     pub params: Vec<String>,
     pub body: Box<Expr>,  // The body is always an expression (simple or block)
+    pub span: Span,
     pub ty: Option<HulkType>,  // Return type
 }
 
