@@ -50,6 +50,8 @@ extern {
         "elif"   => Token::Elif,
         "while"  => Token::While,
         "for"    => Token::For,
+        "function" => Token::Function,
+        "=>" => Token::Arrow,
     }
 }
 
@@ -64,32 +66,58 @@ Comma<T>: Vec<T> = {
 };
 
 
-ExprWithSemicolon: (Box<Expr>, Span) = {
-    <start:@L> <e:Expr> ";" <end:@R> => (e, Span::new(start, end))
+// Function parameters
+FunctionParams: Vec<String> = {
+    <params:Comma<FunctionParam>> => params,
 };
 
-// List of expressions separated by ';', the last may omit the ';'
-ExprsSeparatedBySemicolon: Vec<(Box<Expr>, Span)> = {
-    <mut v:ExprWithSemicolon*> <last:Expr?> => {
-        let mut vec = v;
-        if let Some(e) = last {
-            let span = e.span();
-            vec.push((e, span));
-        }
-        vec
-    }
+FunctionParam: String = {
+    <id:"identifier"> => id,
 };
 
+// Function definition
+FunctionDef: Box<FunctionDef> = {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" "=>" <body:SimpleExpr> <end:@R> => {
+        Box::new(FunctionDef {
+            name,
+            params,
+            body,
+            span: Span::new(start, end),
+            ty: None,
+        })
+    },
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <body:BlockExpr> <end:@R> => {
+        Box::new(FunctionDef {
+            name,
+            params,
+            body,
+            span: Span::new(start, end),
+            ty: None,
+        })
+    },
+};
+
+// Program: List of statements (functions and/or expressions)
 pub Program: Box<Program> = {
-    <start:@L> <items:ExprsSeparatedBySemicolon> <end:@R> => {
-        let statements = items.into_iter().map(|(e, span)| {
-            Stmt::Expr(ExprStmt { expr: e, span })
-        }).collect();
+    <start:@L> <stmts:ProgramItem*> <end:@R> => {
         Box::new(Program {
-            statements,
+            statements: stmts,
             span: Span::new(start, end),
         })
     }
+};
+
+//A program element can be a function or an expression.
+ProgramItem: Stmt = {
+    <func:FunctionDef> ";" => {
+        Stmt::Function(*func)
+    },
+    <expr_start:@L> <e:Expr> ";" <expr_end:@R> => {
+        Stmt::Expr(ExprStmt { 
+            expr: e, 
+            span: Span::new(expr_start, expr_end) 
+        })
+    },
 };
 
 // Expressions
@@ -173,7 +201,6 @@ IfExpr: Box<Expr> = {
     <start:@L> "if" "(" <cond:Expr> ")" <then:Expr>
     <elifs:Elif*> "else" <else_branch:Expr> <end:@R> => {
         let mut result = else_branch;
-        // Cambia iter() por into_iter() y toma los valores directamente
         for (elif_cond, elif_body) in elifs.into_iter().rev() {
             result = Box::new(Expr::If(IfExpr {
                 condition: elif_cond,

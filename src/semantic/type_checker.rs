@@ -452,4 +452,8 @@ impl Visitor for TypeChecker {
         expr.ty = Some(body_ty.clone());
         body_ty
     }
+    
+    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
+        todo!()
+    }
 }
