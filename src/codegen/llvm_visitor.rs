@@ -874,5 +874,9 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
         todo!()
     }
+    
+    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
+        todo!()
+    }
 
 }

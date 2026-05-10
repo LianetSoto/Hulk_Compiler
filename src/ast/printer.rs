@@ -36,6 +36,18 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
+    fn visit_function_def(&mut self, func: &mut FunctionDef) {
+        let params = func.params.join(", ");
+        self.write_line(&format!("FunctionDef {{ name: '{}', params: [{}]", func.name, params));
+        self.indent += 1;
+        self.write_line("body:");
+        self.indent += 1;
+        func.body.accept(self);
+        self.indent -= 1;
+        self.indent -= 1;
+        self.write_line("}");
+    }
+
     fn visit_expr_stmt(&mut self, s: &mut ExprStmt) {
         self.write_line("ExprStmt {");
         self.indent += 1;
@@ -117,12 +129,16 @@ impl Visitor for PrettyPrinter {
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
         self.write_line("Let {");
         self.indent += 1;
-        for (name, init) in &mut expr.bindings {
+        self.write_line(&format!("bindings: ["));
+        self.indent += 1;
+        for (name, value) in &mut expr.bindings {
             self.write_line(&format!("{} =", name));
             self.indent += 1;
-            init.accept(self);
+            value.accept(self);
             self.indent -= 1;
         }
+        self.indent -= 1;
+        self.write_line("]");
         self.write_line("body:");
         self.indent += 1;
         expr.body.accept(self);
@@ -132,10 +148,11 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        self.write_line(&format!("Assign({} :=)", expr.name));
+        self.write_line(&format!("Assign {{ {} :=", expr.name));
         self.indent += 1;
         expr.value.accept(self);
         self.indent -= 1;
+        self.write_line("}");
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
@@ -183,7 +200,7 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        self.write_line(&format!("For({} in)", expr.var));
+        self.write_line(&format!("For {{ var: {}", expr.var));
         self.indent += 1;
         self.write_line("iterable:");
         self.indent += 1;
@@ -194,6 +211,6 @@ impl Visitor for PrettyPrinter {
         expr.body.accept(self);
         self.indent -= 1;
         self.indent -= 1;
-        self.write_line(")");
+        self.write_line("}");
     }
 }
