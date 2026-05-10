@@ -370,7 +370,7 @@ MulDivExpr: Box<Expr> = {
 };
 
 PowerExpr: Box<Expr> = {
-    <start:@L> <l:PowerExpr> "^" <r:UnaryExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
+    <start:@L> <l:UnaryExpr> "^" <r:PowerExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
         op: BinOp::Pow,
         right: r,
