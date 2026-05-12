@@ -3,11 +3,18 @@ use crate::ast::*;
 use crate::error::CompilerError;
 use super::types::HulkType;
 use crate::error::Span;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone)]
+struct FunctionInfo {
+    params_len: usize,
+    return_type: Option<HulkType>,
+}
 
 pub struct TypeChecker {
     errors: Vec<CompilerError>,
     scopes: Vec<HashMap<String, HulkType>>,
+    functions: HashMap<String, FunctionInfo>,
 }
 
 impl TypeChecker {
@@ -17,6 +24,7 @@ impl TypeChecker {
         Self {
             errors: Vec::new(),
             scopes,
+            functions: HashMap::new(),
         }
     }
 
@@ -67,9 +75,35 @@ impl Visitor for TypeChecker {
     type Result = HulkType;
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
+   
         for stmt in &mut program.statements {
-            stmt.accept(self);
+            match stmt {
+                Stmt::Function(func) => {
+                    // 1. verificar si la funcion ya fue declarada (Duplicado)
+                    if self.functions.contains_key(&func.name) {
+                        self.add_type_error(
+                            format!("Duplicate function '{}'", func.name),
+                            func.span,
+                        );
+                    } else {
+                        // 2. registrar la funcion ANTES de revisar su cuerpo.
+                      
+                        self.functions.insert(func.name.clone(), FunctionInfo {
+                            params_len: func.params.len(),
+                            return_type: None, // Se actualizará al analizar el cuerpo
+                        });
+                    }
+
+                    // 3. revisdar el cuerpo de la funcion.
+                    
+                    func.accept(self);
+                }
+                Stmt::Expr(expr_stmt) => {
+                    expr_stmt.expr.accept(self);
+                }
+            }
         }
+
         HulkType::Number
     }
 
@@ -270,6 +304,30 @@ impl Visitor for TypeChecker {
                 HulkType::Object
             }
             _ => {
+                if let Some(func_info) = self.functions.get(&expr.func).cloned() {
+                    if expr.args.len() != func_info.params_len {
+                        self.add_type_error(
+                            format!("Function '{}' expects {} arguments", expr.func, func_info.params_len),
+                            expr.span,
+                        );
+                    }
+
+                    for arg in &mut expr.args {
+                        arg.accept(self);
+                    }
+
+                    return match func_info.return_type {
+                        Some(ret_ty) => {
+                            expr.ty = Some(ret_ty.clone());
+                            ret_ty
+                        }
+                        None => {
+                            expr.ty = Some(HulkType::Object);
+                            HulkType::Object
+                        }
+                    };
+                }
+
                 self.add_type_error(
                     format!("Unknown function '{}'", expr.func),
                     expr.span
@@ -454,6 +512,29 @@ impl Visitor for TypeChecker {
     }
     
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
-        todo!()
+        let mut seen_params = HashSet::new();
+        for param in &func.params {
+            if !seen_params.insert(param) {
+                self.add_type_error(
+                    format!("Duplicate parameter name '{}' in function '{}'", param, func.name),
+                    func.span,
+                );
+            }
+        }
+
+        self.enter_scope();
+        for param in &func.params {
+            self.declare_var(param.clone(), HulkType::Object);
+        }
+
+        let body_ty = func.body.accept(self);
+        self.exit_scope();
+
+        func.ty = Some(body_ty.clone());
+        if let Some(func_info) = self.functions.get_mut(&func.name) {
+            func_info.return_type = Some(body_ty.clone());
+        }
+
+        body_ty
     }
 }

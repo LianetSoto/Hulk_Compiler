@@ -14,6 +14,8 @@ impl HulkType {
             (HulkType::Number, HulkType::Number) => true,
             (HulkType::String, HulkType::String) => true,
             (HulkType::Boolean, HulkType::Boolean) => true,
+            (HulkType::Object, _) => true,
+            (_, HulkType::Object) => true,
             // En el futuro: Object y subtipado
             _ => false,
         }
