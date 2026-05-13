@@ -534,9 +534,9 @@ impl Visitor for TypeChecker {
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
         let mut seen_params = HashSet::new();
         for param in &func.params {
-            if !seen_params.insert(param) {
+            if !seen_params.insert(param.name.clone()) {
                 self.add_type_error(
-                    format!("Duplicate parameter name '{}' in function '{}'", param, func.name),
+                    format!("Duplicate parameter name '{}' in function '{}'", param.name.clone(), func.name),
                     func.span,
                 );
             }
@@ -544,7 +544,7 @@ impl Visitor for TypeChecker {
 
         self.enter_scope();
         for param in &func.params {
-            self.declare_var(param.clone(), HulkType::Object);
+            self.declare_var(param.name.clone(), HulkType::Object);
         }
 
         let body_ty = func.body.accept(self);
