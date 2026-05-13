@@ -76,49 +76,37 @@ FunctionParam: String = {
 };
 
 // Function definition
-FunctionDef: Box<FunctionDef> = {
-    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" "=>" <body:SimpleExpr> <end:@R> => {
-        Box::new(FunctionDef {
+FunctionDef: FunctionDef = {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" "=>" <body:SimpleExpr> ";" <end:@R> => {
+        FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
             ty: None,
-        })
+        }
     },
-    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <body:BlockExpr> <end:@R> => {
-        Box::new(FunctionDef {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <body:BlockExpr> <semi:";"?> <end:@R> => {
+        FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
             ty: None,
-        })
+        }
     },
 };
 
-// Program: List of statements (functions and/or expressions)
 pub Program: Box<Program> = {
-    <start:@L> <stmts:ProgramItem*> <end:@R> => {
+    <start:@L> <funcs:FunctionDef*> <main_expr:Expr> <end:@R> => {
         Box::new(Program {
-            statements: stmts,
+            functions: funcs,
+            main_expr: main_expr,
             span: Span::new(start, end),
         })
     }
 };
 
-//A program element can be a function or an expression.
-ProgramItem: Stmt = {
-    <func:FunctionDef> ";" => {
-        Stmt::Function(*func)
-    },
-    <expr_start:@L> <e:Expr> ";" <expr_end:@R> => {
-        Stmt::Expr(ExprStmt { 
-            expr: e, 
-            span: Span::new(expr_start, expr_end) 
-        })
-    },
-};
 
 // Expressions
 Expr: Box<Expr> = {
