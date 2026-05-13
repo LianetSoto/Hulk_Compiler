@@ -45,8 +45,11 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_function_def(&mut self, func: &mut FunctionDef) {
-        let params = func.params.join(", ");
+    fn visit_function_def(&mut self, func: &mut FunctionDef) { //ARREGLAR
+        let params: Vec<String> = func.params.iter()
+            .map(|p| format!("{}: ?", p.name))
+            .collect();
+        let params = params.join(", ");
         self.write_line(&format!("FunctionDef {{ name: '{}', params: [{}]", func.name, params));
         self.indent += 1;
         self.write_line("body:");
@@ -214,4 +217,5 @@ impl Visitor for PrettyPrinter {
         self.indent -= 1;
         self.write_line("}");
     }
+
 }
