@@ -74,42 +74,62 @@ impl TypeChecker {
 impl Visitor for TypeChecker {
     type Result = HulkType;
 
-    fn visit_program(&mut self, program: &mut Program) -> Self::Result {
+    // fn visit_program(&mut self, program: &mut Program) -> Self::Result {
    
-        for stmt in &mut program.statements {
-            match stmt {
-                Stmt::Function(func) => {
-                    // 1. verificar si la funcion ya fue declarada (Duplicado)
-                    if self.functions.contains_key(&func.name) {
-                        self.add_type_error(
-                            format!("Duplicate function '{}'", func.name),
-                            func.span,
-                        );
-                    } else {
-                        // 2. registrar la funcion ANTES de revisar su cuerpo.
+    //     for stmt in &mut program.statements {
+    //         match stmt {
+    //             Stmt::Function(func) => {
+    //                 // 1. verificar si la funcion ya fue declarada (Duplicado)
+    //                 if self.functions.contains_key(&func.name) {
+    //                     self.add_type_error(
+    //                         format!("Duplicate function '{}'", func.name),
+    //                         func.span,
+    //                     );
+    //                 } else {
+    //                     // 2. registrar la funcion ANTES de revisar su cuerpo.
                       
-                        self.functions.insert(func.name.clone(), FunctionInfo {
-                            params_len: func.params.len(),
-                            return_type: None, // Se actualizará al analizar el cuerpo
-                        });
-                    }
+    //                     self.functions.insert(func.name.clone(), FunctionInfo {
+    //                         params_len: func.params.len(),
+    //                         return_type: None, // Se actualizará al analizar el cuerpo
+    //                     });
+    //                 }
 
-                    // 3. revisdar el cuerpo de la funcion.
+    //                 // 3. revisdar el cuerpo de la funcion.
                     
-                    func.accept(self);
-                }
-                Stmt::Expr(expr_stmt) => {
-                    expr_stmt.expr.accept(self);
-                }
+    //                 func.accept(self);
+    //             }
+    //             Stmt::Expr(expr_stmt) => {
+    //                 expr_stmt.expr.accept(self);
+    //             }
+    //         }
+    //     }
+
+    //     HulkType::Number
+    // }
+    fn visit_program(&mut self, program: &mut Program) -> Self::Result {
+        // 1. Registrar y analizar todas las funciones
+        for func in &mut program.functions {
+            // Verificar duplicado
+            if self.functions.contains_key(&func.name) {
+                self.add_type_error(
+                    format!("Duplicate function '{}'", func.name),
+                    func.span,
+                );
+            } else {
+                self.functions.insert(func.name.clone(), FunctionInfo {
+                    params_len: func.params.len(),
+                    return_type: None,
+                });
             }
+            // Analizar el cuerpo de la función
+            func.accept(self);
         }
 
-        HulkType::Number
+        // 2. Analizar la expresión principal y devolver su tipo
+        let main_ty = program.main_expr.accept(self);
+        main_ty
     }
 
-    fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result {
-        stmt.expr.accept(self)
-    }
 
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
         let ty = HulkType::Number;

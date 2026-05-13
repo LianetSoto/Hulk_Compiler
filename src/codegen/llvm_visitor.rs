@@ -20,9 +20,16 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         self.seed_random_generator()?;
 
        
-        for stmt in &mut program.statements {
-            stmt.accept(self)?;
+        // for stmt in &mut program.statements {
+        //     stmt.accept(self)?;
+        // }
+                // 1. Generar código para todas las funciones
+        for func in &mut program.functions {
+            func.accept(self)?;   // actualmente todo!() – lo implementarás luego
         }
+
+        // 2. Generar código para la expresión principal
+        program.main_expr.accept(self)?;
 
         let zero = i32_type.const_int(0, false);
         self.builder.build_return(Some(&zero))
@@ -35,9 +42,9 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(zero.into())
     }
 
-    fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result {
-        stmt.expr.accept(self)
-    }
+    // fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result {
+    //     stmt.expr.accept(self)
+    // }
 
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
         let f64_type = self.context.f64_type();

@@ -26,12 +26,21 @@ impl PrettyPrinter {
 impl Visitor for PrettyPrinter {
     type Result = ();
 
-    fn visit_program(&mut self, p: &mut Program) {
+    fn visit_program(&mut self, program: &mut Program) {
         self.write_line("Program {");
         self.indent += 1;
-        for stmt in &mut p.statements {
-            stmt.accept(self);
+
+        // Imprimir todas las funciones
+        for func in &mut program.functions {
+            func.accept(self);
         }
+
+        // Imprimir la expresión principal
+        self.write_line("main_expr:");
+        self.indent += 1;
+        program.main_expr.accept(self);
+        self.indent -= 1;
+
         self.indent -= 1;
         self.write_line("}");
     }
@@ -44,14 +53,6 @@ impl Visitor for PrettyPrinter {
         self.indent += 1;
         func.body.accept(self);
         self.indent -= 1;
-        self.indent -= 1;
-        self.write_line("}");
-    }
-
-    fn visit_expr_stmt(&mut self, s: &mut ExprStmt) {
-        self.write_line("ExprStmt {");
-        self.indent += 1;
-        s.expr.accept(self);
         self.indent -= 1;
         self.write_line("}");
     }

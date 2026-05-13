@@ -7,7 +7,6 @@ pub trait Visitor {
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result;
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result;
-    fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result;
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result;
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result;
     fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result;
