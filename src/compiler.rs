@@ -79,11 +79,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
     let lexer = build_lexer(patterns);
     let tokens = lexer.tokenize(source_code);
-    for (i, token) in tokens.iter().enumerate() {
-        if token.0 >= 330 && token.0 <= 360 {
-            println!("TOKEN {}: {:?}", i, token);
-        }
-    }
+    
     // 1. Syntactic analysis (parsing)
     let mut ast = match parse_program(tokens) {
         Ok(prog) => prog,
@@ -94,11 +90,11 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
     };
 
     // ---- IMPRESIÓN DEL AST (SI SE SOLICITA) ----
-    if print_ast {
-        let mut printer = PrettyPrinter::new();
-        ast.accept(&mut printer);
-        println!("=== Abstract Syntax Tree ===\n{}", printer.into_string());
-    }
+    // if print_ast {
+    //     let mut printer = PrettyPrinter::new();
+    //     ast.accept(&mut printer);
+    //     println!("=== Abstract Syntax Tree ===\n{}", printer.into_string());
+    // }
 
     // 2. Semantic analysis (type checking)
     let mut type_checker = TypeChecker::new();
