@@ -1,51 +1,53 @@
 // Test: conditionals (if, elif, else)
 
-// 1. Simple if-else with print
-let a = 42 in if (a % 2 == 0) print("Even") else print("odd");   // Even
+{
+    // 1. Simple if-else with print
+    let a = 42 in if (a % 2 == 0) print("Even") else print("odd");  // Even
 
-// 2. If as expression returning a value
-let a = 42 in print(if (a % 2 == 0) "even" else "odd");          // even
+    // 2. If as expression returning a value
+    let a = 42 in print(if (a % 2 == 0) "even" else "odd");          // even
 
-// 3. Expression blocks in branches
-let a = 42 in
-if (a % 2 == 0) {
-    print(a);
-    print("Even");
-} else print("Odd");                                             // 42\nEven
+    // 3. Expression blocks in branches
+    let a = 42 in
+    if (a % 2 == 0) {
+        print(a);
+        print("Even");
+    } else print("Odd");                                             // 42\nEven
 
-// 4. Multiple elif branches
-let a = 42, mod = a % 3 in
-print(
-    if (mod == 0) "Magic"
-    elif (mod % 3 == 1) "Woke"
-    else "Dumb"
-);                                                               // Magic (since 42%3=0)
+    // 4. Multiple elif branches
+    let a = 42, mod = a % 3 in
+    print(
+        if (mod == 0) "Magic"
+        elif (mod % 3 == 1) "Woke"
+        else "Dumb"
+    );                                                               // Magic (since 42%3=0)
 
-// 5. Using boolean operators
-print(if (true & false) "yes" else "no");                        // no
-print(if (true | false) "yes" else "no");                        // yes
-print(if (!false) "yes" else "no");                              // yes
+    // 5. Using boolean operators
+    print(if (true & false) "yes" else "no");                        // no
+    print(if (true | false) "yes" else "no");                        // yes
+    print(if (!false) "yes" else "no");                              // yes
 
-// 6. Comparison operators
-print(if (10 > 5) "greater" else "less");                        // greater
-print(if (10 <= 5) "yes" else "no");                             // no
-print(if (10 != 10) "yes" else "no");                            // no
+    // 6. Comparison operators
+    print(if (10 > 5) "greater" else "less");                        // greater
+    print(if (10 <= 5) "yes" else "no");                             // no
+    print(if (10 != 10) "yes" else "no");                            // no
 
-// 7. Nested if expressions
-print(if (true) (if (false) 1 else 2) else 3);                  // 2
+    // 7. Nested if expressions
+    print(if (true) (if (false) 1 else 2) else 3);                  // 2
 
-// 8. If with string concatenation
-print(if ("hello" == "hello") "equal" @ " strings" else "different"); // equal strings
+    // 8. If with string concatenation
+    print(if ("hello" == "hello") "equal" @ " strings" else "different"); // equal strings
 
-// 9. If with let inside branches
-let x = 5 in
-print(if (x > 0) (let y = x * 2 in y) else 0);                  // 10
+    // 9. If with let inside branches
+    let x = 5 in
+    print(if (x > 0) (let y = x * 2 in y) else 0);                  // 10
 
-// 10. Empty else (should use default value 0.0)
-print(if (false) 42 else 0);                                      // 0.0 (default)
+    // 10. Empty else (should use default value 0.0)
+    print(if (false) 42 else 0);                                      // 0.0 (default)
 
-// 11. Complex condition with mixed operators
-print(if ((3 + 4) >= 7 & !false) "ok" else "fail");              // ok
+    // 11. Complex condition with mixed operators
+    print(if ((3 + 4) >= 7 & !false) "ok" else "fail");              // ok
 
-// 12. If returning boolean
-print(if (true) true else false);                                 // true
+    // 12. If returning boolean
+    print(if (true) true else false);                                 // true
+}
