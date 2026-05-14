@@ -1,5 +1,5 @@
 function add(x, y) => x + y;
-print(add(5, 3));
+print(add(5,3));
 
 function factorial(n) => if (n <= 1) 1 else n * factorial(n - 1);
 print(factorial(5));
@@ -19,8 +19,6 @@ print(sumOfPowers(3, 2));
 
 function sin(x) => x - x * x * x / 6;
 function cos(x) => 1 - x * x / 2;
-function tan(x) => sin(x) / cos(x);
-print(tan(PI / 4));
 
 function distance(x1, y1, x2, y2) => 
   let dx = x2 - x1, dy = y2 - y1 
@@ -40,9 +38,9 @@ function checkPositive(x) {
 checkPositive(5);
 checkPositive(-3);
 
-function cot(x) => 1 / tan(x);
 function tan(x) => sin(x) / cos(x);
-print(tan(PI / 4) ** 2 + cot(PI / 4) ** 2);
+function cot(x) => 1 / tan(x);
+print(tan(PI / 4) ^ 2 + cot(PI / 4) ^ 2);
 
 function fibonacci(n) => 
   if (n <= 1) 
