@@ -1,0 +1,7 @@
+// A IMPLEMENTAR
+
+function computeRange(start, end) {
+  for (i in range(start, end)) {
+    print(fibonacci(i));
+  }
+}
