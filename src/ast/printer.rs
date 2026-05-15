@@ -79,13 +79,13 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_print(&mut self, p: &mut PrintExpr) {
-        self.write_line("Print {");
-        self.indent += 1;
-        p.argument.accept(self);
-        self.indent -= 1;
-        self.write_line("}");
-    }
+    // fn visit_print(&mut self, p: &mut PrintExpr) {
+    //     self.write_line("Print {");
+    //     self.indent += 1;
+    //     p.argument.accept(self);
+    //     self.indent -= 1;
+    //     self.write_line("}");
+    // }
     
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
         self.write_line(&format!("String({:?})", expr.value));

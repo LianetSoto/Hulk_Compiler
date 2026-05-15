@@ -7,7 +7,7 @@ use crate::semantic::types::HulkType;
 pub enum Expr {
     Number(NumberExpr),
     BinaryOp(BinaryOpExpr),
-    Print(PrintExpr),
+    // Print(PrintExpr),
     String(StringExpr),
     Call(CallExpr),
     Const(ConstExpr),
@@ -27,7 +27,7 @@ impl Expr {
         match self {
             Expr::Number(n) => n.span,
             Expr::BinaryOp(b) => b.span,
-            Expr::Print(p) => p.span,
+            // Expr::Print(p) => p.span,
             Expr::String(s) => s.span,
             Expr::Bool(b) => b.span,
             Expr::Const(c) => c.span,
@@ -47,7 +47,7 @@ impl Expr {
         match self {
             Expr::Number(n) => n.ty.as_ref(),
             Expr::BinaryOp(b) => b.ty.as_ref(),
-            Expr::Print(p) => p.ty.as_ref(),
+            // Expr::Print(p) => p.ty.as_ref(),
             Expr::String(s) => s.ty.as_ref(),
             Expr::Call(c) => c.ty.as_ref(),
             Expr::Const(c) => c.ty.as_ref(),
@@ -69,7 +69,7 @@ impl Node for Expr {
         match self {
             Expr::Number(n) => n.accept(visitor),
             Expr::BinaryOp(b) => b.accept(visitor),
-            Expr::Print(p) => p.accept(visitor),
+            // Expr::Print(p) => p.accept(visitor),
             Expr::Call(call_expr) => call_expr.accept(visitor),
             Expr::Const(const_expr) => const_expr.accept(visitor),
             Expr::String(string_expr) => string_expr.accept(visitor),
@@ -124,18 +124,18 @@ impl Node for BinaryOpExpr {
 }
 
 // PRINT EXPR (llamada a print)
-#[derive(Debug, Clone, PartialEq)]
-pub struct PrintExpr {
-    pub argument: Box<Expr>,
-    pub span: Span,
-    pub ty: Option<HulkType>,
-}
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct PrintExpr {
+//     pub argument: Box<Expr>,
+//     pub span: Span,
+//     pub ty: Option<HulkType>,
+// }
 
-impl Node for PrintExpr {
-    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
-        visitor.visit_print(self)
-    }
-}
+// impl Node for PrintExpr {
+//     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+//         visitor.visit_print(self)
+//     }
+// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringExpr {

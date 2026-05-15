@@ -120,7 +120,6 @@ impl Lexer {
                     "while" => LexerToken::While,
                     "for" => LexerToken::For,
                     "function" => LexerToken::Function,
-                    "print" => LexerToken::Print,
                     "true" => LexerToken::True,
                     "false" => LexerToken::False,
                     "PI" => LexerToken::Pi,

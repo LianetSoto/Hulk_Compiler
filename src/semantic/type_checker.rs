@@ -74,58 +74,27 @@ impl TypeChecker {
 impl Visitor for TypeChecker {
     type Result = HulkType;
 
-    // fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-   
-    //     for stmt in &mut program.statements {
-    //         match stmt {
-    //             Stmt::Function(func) => {
-    //                 // 1. verificar si la funcion ya fue declarada (Duplicado)
-    //                 if self.functions.contains_key(&func.name) {
-    //                     self.add_type_error(
-    //                         format!("Duplicate function '{}'", func.name),
-    //                         func.span,
-    //                     );
-    //                 } else {
-    //                     // 2. registrar la funcion ANTES de revisar su cuerpo.
-                      
-    //                     self.functions.insert(func.name.clone(), FunctionInfo {
-    //                         params_len: func.params.len(),
-    //                         return_type: None, // Se actualizará al analizar el cuerpo
-    //                     });
-    //                 }
-
-    //                 // 3. revisdar el cuerpo de la funcion.
-                    
-    //                 func.accept(self);
-    //             }
-    //             Stmt::Expr(expr_stmt) => {
-    //                 expr_stmt.expr.accept(self);
-    //             }
-    //         }
-    //     }
-
-    //     HulkType::Number
-    // }
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        // 1. Registrar y analizar todas las funciones
+        // 1. Register and analyze all functions
         for func in &mut program.functions {
-            // Verificar duplicado
+            // Check for duplicate function names
             if self.functions.contains_key(&func.name) {
                 self.add_type_error(
                     format!("Duplicate function '{}'", func.name),
                     func.span,
                 );
             } else {
+                // Insert function info (number of parameters, return type unknown yet)
                 self.functions.insert(func.name.clone(), FunctionInfo {
                     params_len: func.params.len(),
                     return_type: None,
                 });
             }
-            // Analizar el cuerpo de la función
+            // Analyze the function body (type checking and inference)
             func.accept(self);
         }
 
-        // 2. Analizar la expresión principal y devolver su tipo
+        // 2. Analyze the main expression and return its type
         let main_ty = program.main_expr.accept(self);
         main_ty
     }
@@ -228,20 +197,20 @@ impl Visitor for TypeChecker {
         result_ty
     }
 
-    fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result {
-        let arg_type = expr.argument.accept(self);
-        if !arg_type.is_compatible_with(&HulkType::Number) &&
-           !arg_type.is_compatible_with(&HulkType::String) &&
-           !arg_type.is_compatible_with(&HulkType::Boolean) {
-            self.add_type_error(
-                "print argument must be Number, String or Boolean".to_string(),
-                expr.argument.span()
-            );
-        }
-        let ty = arg_type; 
-        expr.ty = Some(ty.clone());
-        ty
-    }
+    // fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result {
+    //     let arg_type = expr.argument.accept(self);
+    //     if !arg_type.is_compatible_with(&HulkType::Number) &&
+    //        !arg_type.is_compatible_with(&HulkType::String) &&
+    //        !arg_type.is_compatible_with(&HulkType::Boolean) {
+    //         self.add_type_error(
+    //             "print argument must be Number, String or Boolean".to_string(),
+    //             expr.argument.span()
+    //         );
+    //     }
+    //     let ty = arg_type; 
+    //     expr.ty = Some(ty.clone());
+    //     ty
+    // }
 
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
         let ty = HulkType::String;
@@ -320,8 +289,29 @@ impl Visitor for TypeChecker {
                         self.add_type_error("range end must be Number".to_string(), expr.args[1].span());
                     }
                 }
-                // range devuelve un iterable (por ahora tratamos como Number o podrías definir un tipo especial)
+                // range returns an iterable (for now we treat it as Number)
                 HulkType::Object
+            }
+            "print" => {
+                if expr.args.len() != 1 {
+                    self.add_type_error(
+                        "print expects 1 argument".to_string(),
+                        expr.span
+                    );
+                    HulkType::Error
+                } else {
+                    let arg_ty = expr.args[0].accept(self);
+                    if !arg_ty.is_compatible_with(&HulkType::Number) &&
+                    !arg_ty.is_compatible_with(&HulkType::String) &&
+                    !arg_ty.is_compatible_with(&HulkType::Boolean) {
+                        self.add_type_error(
+                            "print argument must be Number, String or Boolean".to_string(),
+                            expr.args[0].span()
+                        );
+                    }
+                    // print returns the type of its argument
+                    arg_ty
+                }
             }
             _ => {
                 if let Some(func_info) = self.functions.get(&expr.func).cloned() {

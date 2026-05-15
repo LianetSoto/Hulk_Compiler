@@ -24,7 +24,6 @@ extern {
         "}"      => Token::RBrace,
         ";"      => Token::Semicolon,
         ","      => Token::Comma,
-        "print"  => Token::Print,
         "string" => Token::Str(<String>),
         "let"    => Token::Let,
         "in"     => Token::In,
@@ -424,13 +423,13 @@ AtomicExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> "print" "(" <e:Expr> ")" <end:@R> => Box::new(Expr::Print(PrintExpr {
-        argument: e,
-        span: Span::new(start, end),
-        ty: None,
-    })),
+    //<start:@L> "print" "(" <e:Expr> ")" <end:@R> => Box::new(Expr::Print(PrintExpr {
+    //    argument: e,
+    //    span: Span::new(start, end),
+    //    ty: None,
+    //})),
 
-    // Llamada a función genérica (incluye sin, cos, range, etc.)
+    // Generic function call (includes sin, cos, range, etc.)
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
         Box::new(Expr::Call(CallExpr {
             func: id,
