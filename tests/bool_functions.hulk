@@ -1,0 +1,42 @@
+// Test: user‑defined functions with boolean parameters
+
+// --- Logical NOT wrapper ---
+function negate(b) => !b;
+
+// --- Logical AND and OR wrappers ---
+function andGate(a, b) => a & b;
+function orGate(a, b) => a | b;
+
+// --- Boolean returned from a conditional ---
+function which(cond, a, b) => if (cond) a else b;
+
+// --- Nested conditionals returning boolean ---
+function xor(a, b) => if (a) !b else b;
+
+// --- Function that uses a boolean to choose a string ---
+function boolToString(b) => if (b) "true" else "false";
+
+// --- Function that prints a boolean and returns it ---
+function printBool(b) => print(b);
+
+// --- Function that returns a constant boolean ---
+function alwaysTrue() => true;
+function alwaysFalse() => false;
+
+// Entry point
+{
+  print(negate(true));                       // false
+  print(negate(false));                      // true
+  print(andGate(true, false));               // false
+  print(orGate(true, false));                // true
+  print(which(true, true, false));           // true
+  print(which(false, true, false));          // false
+  print(xor(true, false));                   // true
+  print(xor(true, true));                    // false
+  print(boolToString(true));                 // true
+  print(boolToString(false));                // false
+  printBool(true);                           // true  (printed once by the function itself)
+  printBool(false);                          // false
+  print(alwaysTrue());                       // true
+  print(alwaysFalse());                      // false
+}

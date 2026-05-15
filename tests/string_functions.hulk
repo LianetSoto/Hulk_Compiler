@@ -1,0 +1,40 @@
+// Test: user‑defined functions with strings parameters
+
+// --- Simple greeting function ---
+function greet(name) => "Hello " @ name;
+
+// --- Function that concatenates three strings ---
+function concat3(a, b, c) => a @ b @ c;
+
+// --- Spaced concatenation (@@) inside a function ---
+function fullName(first, last) => first @@ last;
+
+// --- Function that uses a local variable with a string ---
+function tag(name, level) {
+  let prefix = "[" @ level @ "] " in
+  print(prefix @ name);
+}
+
+// --- Function that compares two strings ---
+function streq(a, b) => a == b;
+function strne(a, b) => a != b;
+
+// --- Function that returns its own string argument unchanged ---
+function identity(s) => s;
+
+// --- Function that builds a string with repeated patterns ---
+function repeat2(word) => word @ " " @ word;
+
+// Entry point 
+{
+  print(greet("World"));                   // "Hello World"
+  print(concat3("A", "B", "C"));           // "ABC"
+  print(fullName("Ada", "Lovelace"));      // "Ada Lovelace"
+  tag("warning", "WARN");                  // "[WARN] warning"
+  print(streq("abc", "abc"));              // true
+  print(streq("abc", "def"));              // false
+  print(strne("abc", "def"));              // true
+  print(strne("abc", "abc"));              // false
+  print(identity("unchanged"));            // "unchanged"
+  print(repeat2("echo"));                  // "echo echo"
+}
