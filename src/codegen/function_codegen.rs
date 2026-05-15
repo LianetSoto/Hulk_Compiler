@@ -8,6 +8,7 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::BasicValueEnum;
 
 impl<'ctx> LlvmCodeGen<'ctx> {
+    
     /// Declares all built‑in and user functions in the LLVM module.
     /// Returns a map of user function names to their `FunctionValue`s.
     pub(crate) fn declare_all_functions(
@@ -68,6 +69,27 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         };
         self.module.add_function(&func.name, fn_type, None)
     }
+
+    // This method delegates to the C standard library function `printf` to perform the
+    // actual output. It selects the appropriate format specifier and argument conversion
+    // based on the static type of the expression being printed.
+
+    /// # Supported Types and Output Format
+    /// - `String`   → printed as plain text followed by a newline (`%s\n`).
+    /// - `Number`   → printed as a floating‑point number followed by a newline (`%g\n`).
+    /// - `Boolean`  → printed as the word `true` or `false` followed by a newline (`%s\n`).
+    
+    // # LLVM Concepts Used
+    // - **Global string constants**: `build_global_string_ptr` creates a global constant
+    //   array of bytes (e.g., `"%s\n\00"`) and returns an `i8*` pointer to its first element.
+    //   This is necessary because `printf` expects a pointer to a null‑terminated format
+    //   string, not an immediate value.
+    // - **`printf` declaration**: The function is lazily declared with the signature
+    //   `i32 @printf(i8*, ...)`. It is assumed that the target platform provides a standard
+    //   C library.
+    // - **`select` instruction**: For `Boolean` values, the LLVM `select` instruction is
+    //   used to choose between a pointer to the global constant `"true"` and a pointer to
+    //   `"false"`, based on the `i1` boolean value.
 
     pub(crate) fn compile_print_call(
         &mut self,
