@@ -3,12 +3,23 @@ use crate::ast::*;
 use crate::error::CompilerError;
 use inkwell::values::BasicValueEnum;
 use crate::semantic::HulkType;
+use std::collections::HashMap;
 
 impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     type Result = Result<BasicValueEnum<'ctx>, CompilerError>;
 
-    fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        
+   fn visit_program(&mut self, program: &mut Program) -> Self::Result {
+
+        // --- PASO 1: declarar todas las funciones (firmas) ---
+        let user_map = self.declare_all_functions(&program.functions);
+        self.user_functions = user_map;
+
+        // --- PASO 2: visitar cada FunctionDef → llamará a visit_function_def ---
+        for func in &mut program.functions {
+            func.accept(self)?;
+        }
+
+        // --- PASO 3: entry point (main) ---
         let i32_type = self.context.i32_type();
         let main_type = i32_type.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_type, None);
@@ -16,35 +27,52 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
 
-        // Seed the random number generator 
         self.seed_random_generator()?;
-
-       
-        // for stmt in &mut program.statements {
-        //     stmt.accept(self)?;
-        // }
-                // 1. Generar código para todas las funciones
-        for func in &mut program.functions {
-            func.accept(self)?;   // actualmente todo!() – lo implementarás luego
-        }
-
-        // 2. Generar código para la expresión principal
-        program.main_expr.accept(self)?;
+        let _ = program.main_expr.accept(self)?;
 
         let zero = i32_type.const_int(0, false);
         self.builder.build_return(Some(&zero))
-            .map_err(|e| CompilerError::CodegenError {
-                msg: e.to_string(),
-                span: None,
-            })?;
-
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
         self.current_function = None;
         Ok(zero.into())
     }
 
-    // fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result {
-    //     stmt.expr.accept(self)
-    // }
+    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
+        // Recuperar el FunctionValue que ya declaramos en la primera pasada
+        let function = self.user_functions[&func.name];
+
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
+
+        let old_scopes = std::mem::take(&mut self.scopes);
+        self.scopes = vec![HashMap::new()];
+        let old_function = self.current_function.replace(function);
+
+        // Parámetros
+        for (i, param) in func.params.iter().enumerate() {
+            let param_val = function.get_nth_param(i as u32).unwrap();
+            let hulk_ty = param.ty.as_ref().expect("parameter type not inferred");
+            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+            let alloca = self.builder.build_alloca(llvm_ty, &param.name)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
+            self.builder.build_store(alloca, param_val)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
+            self.insert_var(param.name.clone(), alloca);
+        }
+
+        // Cuerpo de la función
+        let body_val = func.body.accept(self)?;
+
+        // Retorno
+        self.builder.build_return(Some(&body_val))
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
+
+        // Restaurar contexto
+        self.scopes = old_scopes;
+        self.current_function = old_function;
+
+        Ok(body_val.into())
+    }
 
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
         let f64_type = self.context.f64_type();
@@ -191,7 +219,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(value)
     }
-
 
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
 
@@ -485,129 +512,35 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             Ok(result.into())}
         }
     }
-    
+
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
-
-        // The type checker guarantees that the function exists and the arguments are valid.
+        // Casos especiales – funciones que necesitan adaptación
         match expr.func.as_str() {
-
-            // 1‑argument mathematical functions (sin, cos, sqrt, exp)
-            "sin" | "cos" | "sqrt" | "exp" => {
-                // Evaluate the single argument. The type checker ensures it is a Number.
-                let arg = expr.args[0].accept(self)?.into_float_value();
-
-                // Select the appropriate external C function.
-                let func = match expr.func.as_str() {
-                    "sin"  => self.declare_sin(),
-                    "cos"  => self.declare_cos(),
-                    "sqrt" => self.declare_sqrt(),
-                    "exp"  => self.declare_exp(),
-                    _ => unreachable!(),
-                };
-
-                // Build the call: `call f64 @sin(f64 %arg)`
-                let call_site = self.builder
-                    .build_call(func, &[arg.into()], "calltmp")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Extract the returned float value.
-                let result = call_site.try_as_basic_value().left()
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: format!("{} call did not return a value", expr.func),
-                        span: Some(expr.span),
-                    })?;
-
-                Ok(result.into())
-            }
-
-            // `rand()` – 0 arguments, returns a random integer cast to f64.
-            "rand" => {
-                let rand_fn = self.declare_rand();
-                let call_site = self.builder
-                    .build_call(rand_fn, &[], "randtmp")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-                let rand_int = call_site.try_as_basic_value().left()
-                    .and_then(|v| v.into_int_value().into())
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: "rand call did not return an integer".to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Convert the i32 to f64 using a signed integer to float cast.
-                let f64_type = self.context.f64_type();
-                let rand_float = self.builder
-                    .build_signed_int_to_float(rand_int, f64_type, "randf64")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Divide by `RAND_MAX` to normalize the value to the interval [0, 1].
-                // `RAND_MAX` is typically 2147483647 on glibc systems.
-                let rand_max = f64_type.const_float(2147483647.0);
-                let result = self.builder
-                    .build_float_div(rand_float, rand_max, "rand_norm")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                Ok(result.into())
-            }
-
-            // `log` – 2 arguments (base, value).
-            "log" => {
-                
-                // logarithm with specified base: log(base, value) = log(value) / log(base)
-                let base = expr.args[0].accept(self)?.into_float_value();
-                let value = expr.args[1].accept(self)?.into_float_value();
-                let log_fn = self.declare_log();
-
-                // Compute log(value)
-                let log_val = self.builder
-                    .build_call(log_fn, &[value.into()], "log_val")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?
-                    .try_as_basic_value().left()
-                    .and_then(|v| v.into_float_value().into())
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: "log(value) call failed".to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Compute log(base)
-                let log_base = self.builder
-                    .build_call(log_fn, &[base.into()], "log_base")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?
-                    .try_as_basic_value().left()
-                    .and_then(|v| v.into_float_value().into())
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: "log(base) call failed".to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Divide: log(value) / log(base)
-                let result = self.builder.build_float_div(log_val, log_base, "log_result")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-                Ok(result.into())
-            }
-
-            _ => unreachable!("ICE: unknown built‑in function '{}' escaped type checker", expr.func),
+            "rand" => return self.compile_rand_call(expr),
+            "log"  => return self.compile_log_call(expr),
+            "print" => return self.compile_print_call(expr), 
+            _ => { /* continuar con la búsqueda genérica */ }
         }
+
+        // Búsqueda genérica en el módulo LLVM (built‑ins simples + usuario)
+        let func = self.module.get_function(&expr.func)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("undefined function '{}'", expr.func),
+                span: Some(expr.span),
+            })?;
+
+        let mut args = Vec::new();
+        for arg in &mut expr.args {
+            args.push(arg.accept(self)?.into());
+        }
+
+        let call_site = self.builder.build_call(func, &args, "calltmp")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        Ok(call_site.try_as_basic_value().left().unwrap().into())
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
@@ -882,8 +815,4 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         todo!()
     }
     
-    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
-        todo!()
-    }
-
 }
