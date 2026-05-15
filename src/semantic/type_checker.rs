@@ -531,6 +531,32 @@ impl Visitor for TypeChecker {
         body_ty
     }
     
+    // fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
+    //     let mut seen_params = HashSet::new();
+    //     for param in &func.params {
+    //         if !seen_params.insert(param.name.clone()) {
+    //             self.add_type_error(
+    //                 format!("Duplicate parameter name '{}' in function '{}'", param.name.clone(), func.name),
+    //                 func.span,
+    //             );
+    //         }
+    //     }
+
+    //     self.enter_scope();
+    //     for param in &func.params {
+    //         self.declare_var(param.name.clone(), HulkType::Object);
+    //     }
+
+    //     let body_ty = func.body.accept(self);
+    //     self.exit_scope();
+
+    //     func.ty = Some(body_ty.clone());
+    //     if let Some(func_info) = self.functions.get_mut(&func.name) {
+    //         func_info.return_type = Some(body_ty.clone());
+    //     }
+
+    //     body_ty
+    // }
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
         let mut seen_params = HashSet::new();
         for param in &func.params {
@@ -544,7 +570,8 @@ impl Visitor for TypeChecker {
 
         self.enter_scope();
         for param in &func.params {
-            self.declare_var(param.name.clone(), HulkType::Object);
+            // Cambio: los parámetros ahora son de tipo Number en lugar de Object
+            self.declare_var(param.name.clone(), HulkType::Number);
         }
 
         let body_ty = func.body.accept(self);
