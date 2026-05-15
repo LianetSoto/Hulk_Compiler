@@ -67,12 +67,18 @@ Comma<T>: Vec<T> = {
 
 
 // Function parameters
-FunctionParams: Vec<String> = {
+FunctionParams: Vec<Params> = {
     <params:Comma<FunctionParam>> => params,
 };
 
-FunctionParam: String = {
-    <id:"identifier"> => id,
+FunctionParam: Params = {
+    <start:@L> <id:"identifier"> <end:@R> => {
+        Params {
+            name: id,
+            ty: None,
+            span: Span::new(start, end),
+        }
+    },
 };
 
 // Function definition
