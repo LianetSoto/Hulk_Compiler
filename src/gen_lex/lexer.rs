@@ -124,6 +124,7 @@ impl Lexer {
                     "false" => LexerToken::False,
                     "PI" => LexerToken::Pi,
                     "E" => LexerToken::E,
+                    "range" => LexerToken::Range,
                     _ => LexerToken::Identifier(token_value),
                 };
                 tokens.push((start, lexer_token, i));
