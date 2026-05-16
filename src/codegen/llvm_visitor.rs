@@ -730,9 +730,5 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(phi.as_basic_value().into())
     }   
-       
-    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        todo!()
-    }
-    
+  
 }

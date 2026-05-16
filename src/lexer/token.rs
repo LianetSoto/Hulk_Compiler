@@ -15,6 +15,7 @@ pub enum Token {
     For,
     True,
     False,
+    Range,
 
     // 
     LParen,
@@ -129,6 +130,7 @@ impl fmt::Display for Token {
             Token::Rand => write!(f, "rand"),
             Token::Number(v) => write!(f, "{}", v),
             Token::Str(s) => write!(f, "\"{}\"", s),
+            Token::Range => write!(f, "range"),
         }
     }
 }

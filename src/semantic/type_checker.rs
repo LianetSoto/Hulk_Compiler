@@ -197,21 +197,6 @@ impl Visitor for TypeChecker {
         result_ty
     }
 
-    // fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result {
-    //     let arg_type = expr.argument.accept(self);
-    //     if !arg_type.is_compatible_with(&HulkType::Number) &&
-    //        !arg_type.is_compatible_with(&HulkType::String) &&
-    //        !arg_type.is_compatible_with(&HulkType::Boolean) {
-    //         self.add_type_error(
-    //             "print argument must be Number, String or Boolean".to_string(),
-    //             expr.argument.span()
-    //         );
-    //     }
-    //     let ty = arg_type; 
-    //     expr.ty = Some(ty.clone());
-    //     ty
-    // }
-
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
         let ty = HulkType::String;
         expr.ty = Some(ty.clone());
@@ -505,22 +490,6 @@ impl Visitor for TypeChecker {
         body_ty
     }
 
-    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        let iterable_ty = expr.iterable.accept(self);
-        if !iterable_ty.is_compatible_with(&HulkType::Object) && !iterable_ty.is_compatible_with(&HulkType::Number) {
-            self.add_type_error(
-                "For iterable must be a range or iterable object".to_string(),
-                expr.iterable.span(),
-            );
-        }
-
-        self.declare_var(expr.var.clone(), HulkType::Number);
-        let body_ty = expr.body.accept(self);
-
-        expr.ty = Some(body_ty.clone());
-        body_ty
-    }
-    
     // fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
     //     let mut seen_params = HashSet::new();
     //     for param in &func.params {
