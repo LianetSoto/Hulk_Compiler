@@ -170,9 +170,9 @@ Binding: (String, Box<Expr>) = {
 
 //Destructive assignment (:=)
 DestructiveAssignExpr: Box<Expr> = {
-    <start:@L> <id:"identifier"> ":=" <rhs:LogicalOrExpr> <end:@R> => {
+    <start:@L> <lhs:PostfixExpr> ":=" <rhs:LogicalOrExpr> <end:@R> => {
         Box::new(Expr::DestructiveAssign(DestructiveAssignExpr {
-            name: id,
+            lhs,
             value: rhs,
             span: Span::new(start, end),
             ty: None,

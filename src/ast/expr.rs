@@ -236,7 +236,7 @@ impl Node for LetExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DestructiveAssignExpr {
-    pub name: String,
+    pub lhs: Box<Expr>,
     pub value: Box<Expr>,
     pub span: Span,
     pub ty: Option<HulkType>,
