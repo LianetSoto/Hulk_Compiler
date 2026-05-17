@@ -37,6 +37,15 @@ impl TypeChecker {
         }
     }
 
+    fn is_assignable(&mut self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(_) => true,          // asignación a variable local
+            Expr::AttributeAccess(attr) => true, // asignación a atributo (self.x, obj.y)
+            // Puedes extender a accesos a vectores, etc.
+            _ => false,
+        }
+    }
+
     fn add_type_error(&mut self, msg: String, span: Span) {
         self.errors.push(CompilerError::TypeError { msg, span });
     }
@@ -74,42 +83,10 @@ impl TypeChecker {
 impl Visitor for TypeChecker {
     type Result = HulkType;
 
-    // fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-   
-    //     for stmt in &mut program.statements {
-    //         match stmt {
-    //             Stmt::Function(func) => {
-    //                 // 1. verificar si la funcion ya fue declarada (Duplicado)
-    //                 if self.functions.contains_key(&func.name) {
-    //                     self.add_type_error(
-    //                         format!("Duplicate function '{}'", func.name),
-    //                         func.span,
-    //                     );
-    //                 } else {
-    //                     // 2. registrar la funcion ANTES de revisar su cuerpo.
-                      
-    //                     self.functions.insert(func.name.clone(), FunctionInfo {
-    //                         params_len: func.params.len(),
-    //                         return_type: None, // Se actualizará al analizar el cuerpo
-    //                     });
-    //                 }
-
-    //                 // 3. revisdar el cuerpo de la funcion.
-                    
-    //                 func.accept(self);
-    //             }
-    //             Stmt::Expr(expr_stmt) => {
-    //                 expr_stmt.expr.accept(self);
-    //             }
-    //         }
-    //     }
-
-    //     HulkType::Number
-    // }
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        // 1. Registrar y analizar todas las funciones
+        // 1. Register and analyze all function definitions to know their return types
         for func in &mut program.functions {
-            // Verificar duplicado
+            // Verify duplicate function names
             if self.functions.contains_key(&func.name) {
                 self.add_type_error(
                     format!("Duplicate function '{}'", func.name),
@@ -121,11 +98,11 @@ impl Visitor for TypeChecker {
                     return_type: None,
                 });
             }
-            // Analizar el cuerpo de la función
+            // Analyze function body to infer return type
             func.accept(self);
         }
 
-        // 2. Analizar la expresión principal y devolver su tipo
+        // 2. Analyze principal expression and return its type
         let main_ty = program.main_expr.accept(self);
         main_ty
     }
@@ -431,31 +408,32 @@ impl Visitor for TypeChecker {
         body_ty
     }
 
-    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        // Buscar la variable
-        let var_ty = match self.lookup_var(&expr.name) {
-            Some(ty) => ty,
-            None => {
-                self.add_type_error(
-                    format!("Undefined variable '{}'", expr.name),
-                    expr.span
-                );
-                HulkType::Error
-            }
-        };
-
-        // Evaluar el valor asignado
-        let value_ty = expr.value.accept(self);
-
-        // Verificar compatibilidad de tipos
-        if var_ty != HulkType::Error && !value_ty.is_compatible_with(&var_ty) {
+    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> HulkType {
+        // Evaluate the type of the left-hand side (lhs)
+        let lhs_ty = expr.lhs.accept(self);
+        
+        // Check that the lhs is assignable (e.g., variable or attribute access)
+        if !self.is_assignable(&expr.lhs) {
             self.add_type_error(
-                format!("Cannot assign {:?} to variable of type {:?}", value_ty, var_ty),
+                format!("Left-hand side of assignment is not assignable"),
+                expr.span
+            );
+            expr.ty = Some(HulkType::Error);
+            return HulkType::Error;
+        }
+        
+        // Evaluate the type of the assigned value
+        let value_ty = expr.value.accept(self);
+        
+        // Verify type compatibility
+        if lhs_ty != HulkType::Error && !value_ty.is_compatible_with(&lhs_ty) {
+            self.add_type_error(
+                format!("Cannot assign {:?} to expression of type {:?}", value_ty, lhs_ty),
                 expr.span
             );
         }
-
-        // El tipo de una asignación es el tipo del valor
+    
+        // The type of the assignment expression is the type of the value
         expr.ty = Some(value_ty.clone());
         value_ty
     }
@@ -556,5 +534,37 @@ impl Visitor for TypeChecker {
         }
 
         body_ty
+    }
+    
+    fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_method(&mut self, m: &mut Method) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_attribute_access(&mut self, e: &mut expr::AttributeAccessExpr) -> Self::Result {
+        todo!()
     }
 }
