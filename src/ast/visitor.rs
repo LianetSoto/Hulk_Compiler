@@ -9,7 +9,6 @@ pub trait Visitor {
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result;
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result;
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result;
-    fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result;
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result;
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result;
     fn visit_const(&mut self, expr: &mut ConstExpr) -> Self::Result;
@@ -21,7 +20,6 @@ pub trait Visitor {
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result;
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result;
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result;
-    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result;
     fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result;
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result;
     fn visit_method(&mut self, m: &mut Method) -> Self::Result;

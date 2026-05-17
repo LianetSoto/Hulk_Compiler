@@ -3,12 +3,24 @@ use crate::ast::*;
 use crate::error::CompilerError;
 use inkwell::values::BasicValueEnum;
 use crate::semantic::HulkType;
+use std::collections::HashMap;
 
 impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     type Result = Result<BasicValueEnum<'ctx>, CompilerError>;
 
+    /// Generates LLVM IR for the entire HULK program.
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        
+
+        // Declare every function (built‑ins and user‑defined) in the module.
+        let user_map = self.declare_all_functions(&program.functions);
+        self.user_functions = user_map;
+
+        // Compile each user function body.
+        for func in &mut program.functions {
+            func.accept(self)?;
+        }
+
+        // entry point (main) 
         let i32_type = self.context.i32_type();
         let main_type = i32_type.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_type, None);
@@ -16,39 +28,62 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
 
-        // Seed the random number generator 
+        // Seed the C random generator so that `rand()` is non‑deterministic.
         self.seed_random_generator()?;
 
-       
-        // for stmt in &mut program.statements {
-        //     stmt.accept(self)?;
-        // }
-                // 1. Generar código para todas las funciones
-        for func in &mut program.functions {
-            func.accept(self)?;   // actualmente todo!() – lo implementarás luego
-        }
-
-        // 2. Generar código para la expresión principal
-        program.main_expr.accept(self)?;
+        // Compile the global entry‑point expression.
+        let _ = program.main_expr.accept(self)?;
 
         let zero = i32_type.const_int(0, false);
         self.builder.build_return(Some(&zero))
-            .map_err(|e| CompilerError::CodegenError {
-                msg: e.to_string(),
-                span: None,
-            })?;
-
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
         self.current_function = None;
         Ok(zero.into())
     }
 
-    // fn visit_expr_stmt(&mut self, stmt: &mut ExprStmt) -> Self::Result {
-    //     stmt.expr.accept(self)
-    // }
+    /// Compiles the body of a user‑defined function.
+    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
 
-    fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
-        let f64_type = self.context.f64_type();
-        Ok(f64_type.const_float(expr.value).into())
+        // Retrieve the LLVM function value that was registered in the first pass.
+        let function = self.user_functions[&func.name];
+
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
+
+        // Remember the current scope chain and the enclosing function, then set
+        // up a fresh scope for the function's own variables.
+        let old_scopes = std::mem::take(&mut self.scopes);
+        self.scopes = vec![HashMap::new()];
+        let old_function = self.current_function.replace(function);
+
+        // Allocate stack storage for each parameter and store the incoming value.
+        // The type checker guarantees that every parameter has an inferred type.
+        for (i, param) in func.params.iter().enumerate() {
+            let param_val = function.get_nth_param(i as u32).unwrap();
+            let hulk_ty = param.ty.as_ref().expect("parameter type not inferred");
+            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+            let alloca = self.builder.build_alloca(llvm_ty, &param.name)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
+            self.builder.build_store(alloca, param_val)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
+            self.insert_var(param.name.clone(), alloca);
+        }
+
+        // Generate the IR for the body expression.
+        let body_val = func.body.accept(self)?;
+
+        // The result of the function is the value produced by its body.
+        self.builder.build_return(Some(&body_val))
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(func.span),
+            })?;
+
+        // Restore the previous scope chain and the surrounding function context.
+        self.scopes = old_scopes;
+        self.current_function = old_function;
+
+        Ok(body_val.into())
     }
 
     /// Generates LLVM IR for a string literal expression.
@@ -74,8 +109,24 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(ptr.as_pointer_value().into())
     }
 
-    /// Generates LLVM IR for a built‑in mathematical constant (`PI` or `E`).
+    /// Generates LLVM IR for a number literal
+    fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
+        let f64_type = self.context.f64_type();
+        Ok(f64_type.const_float(expr.value).into())
+    }
 
+    /// Generates LLVM IR for a boolean literal (`true` or `false`).
+    fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
+        // Get the LLVM type for a 1‑bit integer (`i1`).
+        let bool_type = self.context.bool_type();
+
+        // Get the LLVM type for a 1‑bit integer (`i1`).
+        let value = bool_type.const_int(if expr.value { 1 } else { 0 }, false);
+
+        Ok(value.into())
+    }
+
+    /// Generates LLVM IR for a built‑in mathematical constant (`PI` or `E`).
     fn visit_const(&mut self, expr: &mut ConstExpr) -> Self::Result {
         // Get the LLVM type for 64‑bit floating‑point numbers 
         let f64_type = self.context.f64_type();
@@ -89,110 +140,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(f64_type.const_float(value).into())
     }
-
-    /// Generates LLVM IR for a boolean literal (`true` or `false`).
     
-    fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
-        // Get the LLVM type for a 1‑bit integer (`i1`).
-        let bool_type = self.context.bool_type();
-
-        // Get the LLVM type for a 1‑bit integer (`i1`).
-        let value = bool_type.const_int(if expr.value { 1 } else { 0 }, false);
-
-        Ok(value.into())
-    }
-
-    /// Generates LLVM IR for the `print` expression in HULK.
-     
-    // This method delegates to the C standard library function `printf` to perform the
-    // actual output. It selects the appropriate format specifier and argument conversion
-    // based on the static type of the expression being printed.
-
-    /// # Supported Types and Output Format
-    /// - `String`   → printed as plain text followed by a newline (`%s\n`).
-    /// - `Number`   → printed as a floating‑point number followed by a newline (`%g\n`).
-    /// - `Boolean`  → printed as the word `true` or `false` followed by a newline (`%s\n`).
-    
-    // # LLVM Concepts Used
-    // - **Global string constants**: `build_global_string_ptr` creates a global constant
-    //   array of bytes (e.g., `"%s\n\00"`) and returns an `i8*` pointer to its first element.
-    //   This is necessary because `printf` expects a pointer to a null‑terminated format
-    //   string, not an immediate value.
-    // - **`printf` declaration**: The function is lazily declared with the signature
-    //   `i32 @printf(i8*, ...)`. It is assumed that the target platform provides a standard
-    //   C library.
-    // - **`select` instruction**: For `Boolean` values, the LLVM `select` instruction is
-    //   used to choose between a pointer to the global constant `"true"` and a pointer to
-    //   `"false"`, based on the `i1` boolean value.
-
-    fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result {
-
-        // 1. Generate code for the argument expression.
-        let value = expr.argument.accept(self)?;
-
-        // 2. Retrieve the static type of the argument (inferred by the type checker).
-        let arg_ty = expr.argument.get_type().ok_or_else(|| CompilerError::CodegenError {
-            msg: "type not inferred for print argument".to_string(),
-            span: Some(expr.span),
-        })?;
-
-        // 3. Obtain the `printf` function (declare it if not already present).
-        let printf_fn = self.declare_printf();
-
-        // 4. Handle each supported type.
-        let format_str = match arg_ty {
-
-            // 4a. Create (or reuse) a global constant for the format string "%s\n".
-            HulkType::String | HulkType::Boolean => self.builder.build_global_string_ptr("%s\n", "fmt_str"),
-
-            // 4b. Create a global constant for the format string `"%g\n"`.
-            HulkType::Number => self.builder.build_global_string_ptr("%g\n", "fmt_num"),
-
-            // Otherwise
-            _ => return Err(CompilerError::CodegenError {
-                msg: "cannot print this type".to_string(),
-                span: Some(expr.span),
-            }),
-        }.map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
-
-        // 4b. Retrieve and convert the argument value
-        let llvm_arg = if *arg_ty == HulkType::String {
-            value.into_pointer_value().into()
-
-        } else if *arg_ty == HulkType::Boolean {
-
-            // For a boolean, we have an `i1` value. We need to select between the
-            // global string constants "true" and "false" and pass the chosen pointer.
-            let bool_val = value.into_int_value();
-            
-            let true_ptr = self.get_true_str();
-            let false_ptr = self.get_false_str();
-
-            // let value = if bool_val { true_ptr } else { false_ptr };
-
-            // Use LLVM's `select` instruction: if bool_val is true → true_ptr, else false_ptr.
-            let selected_ptr = self
-                .builder
-                .build_select(bool_val, true_ptr, false_ptr, "bool_str")
-                .map_err(|e| CompilerError::CodegenError {
-                    msg: e.to_string(),
-                    span: Some(expr.span),
-                })?;
-
-            // Convert the selected pointer to the generic argument type.
-            selected_ptr.into()
-        }else {
-            // For Number, we have an `f64` value.
-            value.into_float_value().into()
-        };
-
-        self.builder.build_call(printf_fn, &[format_str.as_pointer_value().into(), llvm_arg], "printf_call")
-            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
-
-        Ok(value)
-    }
-
-
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
 
 
@@ -448,7 +396,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
 
     /// Generates LLVM IR for a unary operation.
-
     fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
         let operand = expr.expr.accept(self)?;
         match expr.op {
@@ -485,129 +432,35 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             Ok(result.into())}
         }
     }
-    
+
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
-
-        // The type checker guarantees that the function exists and the arguments are valid.
+        // Casos especiales – funciones que necesitan adaptación
         match expr.func.as_str() {
-
-            // 1‑argument mathematical functions (sin, cos, sqrt, exp)
-            "sin" | "cos" | "sqrt" | "exp" => {
-                // Evaluate the single argument. The type checker ensures it is a Number.
-                let arg = expr.args[0].accept(self)?.into_float_value();
-
-                // Select the appropriate external C function.
-                let func = match expr.func.as_str() {
-                    "sin"  => self.declare_sin(),
-                    "cos"  => self.declare_cos(),
-                    "sqrt" => self.declare_sqrt(),
-                    "exp"  => self.declare_exp(),
-                    _ => unreachable!(),
-                };
-
-                // Build the call: `call f64 @sin(f64 %arg)`
-                let call_site = self.builder
-                    .build_call(func, &[arg.into()], "calltmp")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Extract the returned float value.
-                let result = call_site.try_as_basic_value().left()
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: format!("{} call did not return a value", expr.func),
-                        span: Some(expr.span),
-                    })?;
-
-                Ok(result.into())
-            }
-
-            // `rand()` – 0 arguments, returns a random integer cast to f64.
-            "rand" => {
-                let rand_fn = self.declare_rand();
-                let call_site = self.builder
-                    .build_call(rand_fn, &[], "randtmp")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-                let rand_int = call_site.try_as_basic_value().left()
-                    .and_then(|v| v.into_int_value().into())
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: "rand call did not return an integer".to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Convert the i32 to f64 using a signed integer to float cast.
-                let f64_type = self.context.f64_type();
-                let rand_float = self.builder
-                    .build_signed_int_to_float(rand_int, f64_type, "randf64")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Divide by `RAND_MAX` to normalize the value to the interval [0, 1].
-                // `RAND_MAX` is typically 2147483647 on glibc systems.
-                let rand_max = f64_type.const_float(2147483647.0);
-                let result = self.builder
-                    .build_float_div(rand_float, rand_max, "rand_norm")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                Ok(result.into())
-            }
-
-            // `log` – 2 arguments (base, value).
-            "log" => {
-                
-                // logarithm with specified base: log(base, value) = log(value) / log(base)
-                let base = expr.args[0].accept(self)?.into_float_value();
-                let value = expr.args[1].accept(self)?.into_float_value();
-                let log_fn = self.declare_log();
-
-                // Compute log(value)
-                let log_val = self.builder
-                    .build_call(log_fn, &[value.into()], "log_val")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?
-                    .try_as_basic_value().left()
-                    .and_then(|v| v.into_float_value().into())
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: "log(value) call failed".to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Compute log(base)
-                let log_base = self.builder
-                    .build_call(log_fn, &[base.into()], "log_base")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?
-                    .try_as_basic_value().left()
-                    .and_then(|v| v.into_float_value().into())
-                    .ok_or_else(|| CompilerError::CodegenError {
-                        msg: "log(base) call failed".to_string(),
-                        span: Some(expr.span),
-                    })?;
-
-                // Divide: log(value) / log(base)
-                let result = self.builder.build_float_div(log_val, log_base, "log_result")
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
-                Ok(result.into())
-            }
-
-            _ => unreachable!("ICE: unknown built‑in function '{}' escaped type checker", expr.func),
+            "rand" => return self.compile_rand_call(expr),
+            "log"  => return self.compile_log_call(expr),
+            "print" => return self.compile_print_call(expr), 
+            _ => { /* continuar con la búsqueda genérica */ }
         }
+
+        // Búsqueda genérica en el módulo LLVM (built‑ins simples + usuario)
+        let func = self.module.get_function(&expr.func)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("undefined function '{}'", expr.func),
+                span: Some(expr.span),
+            })?;
+
+        let mut args = Vec::new();
+        for arg in &mut expr.args {
+            args.push(arg.accept(self)?.into());
+        }
+
+        let call_site = self.builder.build_call(func, &args, "calltmp")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        Ok(call_site.try_as_basic_value().left().unwrap().into())
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
@@ -878,10 +731,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(phi.as_basic_value().into())
     }   
-       
-    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        todo!()
-    }
     
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
         todo!()
@@ -919,4 +768,5 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         todo!()
     }
 
+  
 }

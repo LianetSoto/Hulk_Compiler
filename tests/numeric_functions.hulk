@@ -1,0 +1,80 @@
+// Test: user‑defined functions with numeric arameters
+
+function add(x, y) => x + y;
+
+function factorial(n) => if (n <= 1) 1 else n * factorial(n - 1);
+
+function operate(x, y) {
+  print(x + y);
+  print(x - y);
+  print(x * y);
+  print(x / y);
+}
+
+function square(x) => x * x;
+function cube(x) => x * x * x;
+
+function sumOfPowers(x, y) => square(x) + cube(y);
+
+function tan(x) => sin(x) / cos(x);
+function cot(x) => 1 / tan(x);
+
+function distance(x1, y1, x2, y2) =>
+  let dx = x2 - x1, dy = y2 - y1
+  in (dx * dx + dy * dy) ^ 0.5;
+
+function getPI() => PI;
+function getE() => E;
+
+function checkPositive(x) {
+  if (x > 0)
+    print("Positive")
+  else
+    print("Not positive")
+}
+
+function fibonacci(n) =>
+  if (n <= 1) n else fibonacci(n - 1) + fibonacci(n - 2);
+
+
+function isGreater(x, y) => x > y;
+
+function describeNumber(n) =>
+  let positive = n > 0 in
+  let even = n % 2 == 0 in
+  if (positive & even)
+    "positive and even"
+  else if (positive & !even)
+    "positive and odd"
+  else if (!positive & even)
+    "non‑positive and even"
+  else
+    "non‑positive and odd";
+
+function isEven(n) => n % 2 == 0;
+function isPositive(n) => n > 0;
+
+// Entry point
+{
+  print(add(5, 3));                         // 8
+  print(factorial(5));                      // 120
+  operate(10, 2);                           // prints 12, 8, 20, 5  (returned 5 is discarded)
+  print(sumOfPowers(3, 2));                 // 17   (3² + 2³ = 9 + 8)
+  print(tan(PI / 4));                       // ~1   (depends on approximations)
+  print(distance(0, 0, 3, 4));              // 5    (3‑4‑5 triangle)
+  print(getPI() + getE());                  // ~5.85987
+  checkPositive(5);                         // Positive
+  checkPositive(-3);                        // Not positive
+  print(tan(PI / 4) ^ 2 + cot(PI / 4) ^ 2); // ~2   (tan² + cot² for π/4)
+  print(isGreater(10, 5));                   // true
+  print(isGreater(5, 10));                   // false
+  print(describeNumber(10));                 // "positive and even"
+  print(describeNumber(7));                  // "positive and odd"
+  print(describeNumber(0));                  // "non‑positive and even"
+  print(describeNumber(-3));                 // "non‑positive and odd"
+  print(isEven(4));                          // true
+  print(isEven(7));                          // false
+  print(isPositive(3));                      // true
+  print(isPositive(-3));                     // false
+}
+

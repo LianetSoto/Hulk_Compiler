@@ -64,6 +64,7 @@ extern {
         "String" => Token::StringType,
         "Boolean"=> Token::BooleanType,
         "Object" => Token::ObjectType,
+        "range" => Token::Range,
     }
 }
 
@@ -168,12 +169,18 @@ ParentSpec: Parent = {
 };
 
 // Function parameters
-FunctionParams: Vec<String> = {
+FunctionParams: Vec<Params> = {
     <params:Comma<FunctionParam>> => params,
 };
 
-FunctionParam: String = {
-    <id:"identifier"> => id,
+FunctionParam: Params = {
+    <start:@L> <id:"identifier"> <end:@R> => {
+        Params {
+            name: id,
+            ty: None,
+            span: Span::new(start, end),
+        }
+    },
 };
 
 // Function definition
@@ -354,12 +361,54 @@ WhileExpr: Box<Expr> = {
 };
 
 ForExpr: Box<Expr> = {
-    <start:@L> "for" "(" <var:"identifier"> "in" <iter:Expr> ")" <body:Expr> <end:@R> => {
-        Box::new(Expr::For(ForExpr {
-            var: var,
-            iterable: iter,
-            body: body,
-            span: Span::new(start, end),
+    <start:@L> "for" "(" <var:"identifier"> "in" "range" "(" <from:Expr> "," <to:Expr> ")" ")" <body:Expr> <end:@R> => {
+        let span = Span::new(start, end);
+
+        // Bind the loop variable to the start value: let var = from
+        let binding = (var.clone(), from);
+
+        // Condition: var < to
+        let cond = Box::new(Expr::BinaryOp(BinaryOpExpr {
+            left: Box::new(Expr::Variable(VariableExpr { name: var.clone(), span, ty: None })),
+            op: BinOp::Lt,
+            right: to,
+            span,
+            ty: None,
+        }));
+
+        // Increment: var := var + 1
+        let inc = Box::new(Expr::DestructiveAssign(DestructiveAssignExpr {
+            name: var.clone(),
+            value: Box::new(Expr::BinaryOp(BinaryOpExpr {
+                left: Box::new(Expr::Variable(VariableExpr { name: var.clone(), span, ty: None })),
+                op: BinOp::Add,
+                right: Box::new(Expr::Number(NumberExpr { value: 1.0, span, ty: None })),
+                span,
+                ty: None,
+            })),
+            span,
+            ty: None,
+        }));
+
+        // While body: run the user's body, then increment
+        let while_body = Box::new(Expr::Block(BlockExpr {
+            expressions: vec![body, inc],
+            span,
+            ty: None,
+        }));
+
+        let while_expr = Box::new(Expr::While(WhileExpr {
+            condition: cond,
+            body: while_body,
+            span,
+            ty: None,
+        }));
+
+        // Desugar to: let var = from in while (var < to) { body; var := var + 1 }
+        Box::new(Expr::Let(LetExpr {
+            bindings: vec![binding],
+            body: while_expr,
+            span,
             ty: None,
         }))
     }
@@ -573,13 +622,13 @@ AtomicExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-    <start:@L> "print" "(" <e:Expr> ")" <end:@R> => Box::new(Expr::Print(PrintExpr {
-        argument: e,
-        span: Span::new(start, end),
-        ty: None,
-    })),
+    //<start:@L> "print" "(" <e:Expr> ")" <end:@R> => Box::new(Expr::Print(PrintExpr {
+    //    argument: e,
+    //    span: Span::new(start, end),
+    //    ty: None,
+    //})),
 
-    // Llamada a función genérica (incluye sin, cos, range, etc.)
+    // Generic function call (includes sin, cos, range, etc.)
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
         Box::new(Expr::Call(CallExpr {
             func: id,

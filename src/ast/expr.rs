@@ -7,7 +7,7 @@ use crate::semantic::types::HulkType;
 pub enum Expr {
     Number(NumberExpr),
     BinaryOp(BinaryOpExpr),
-    Print(PrintExpr),
+    // Print(PrintExpr),
     String(StringExpr),
     Call(CallExpr),
     Const(ConstExpr),
@@ -19,12 +19,12 @@ pub enum Expr {
     Block(BlockExpr),
     If(IfExpr),
     While(WhileExpr),
-    For(ForExpr),
     New(NewExpr),
     MethodCall(MethodCallExpr),
     SelfExpr(SelfExpr),
     Base(BaseExpr),
     AttributeAccess(AttributeAccessExpr),
+    //For(ForExpr),
 }
 
 impl Expr {
@@ -32,7 +32,7 @@ impl Expr {
         match self {
             Expr::Number(n) => n.span,
             Expr::BinaryOp(b) => b.span,
-            Expr::Print(p) => p.span,
+            // Expr::Print(p) => p.span,
             Expr::String(s) => s.span,
             Expr::Bool(b) => b.span,
             Expr::Const(c) => c.span,
@@ -44,12 +44,12 @@ impl Expr {
             Expr::Block(b) => b.span,
             Expr::If(i) => i.span,
             Expr::While(w) => w.span,
-            Expr::For(f) => f.span,
             Expr::New(new_expr) => new_expr.span,
             Expr::MethodCall(method_call_expr) => method_call_expr.span,
             Expr::SelfExpr(self_expr) => self_expr.span,
             Expr::Base(base_expr) => base_expr.span,
             Expr::AttributeAccess(attr)=> attr.span,
+            //Expr::For(f) => f.span,
         }
     }
 
@@ -57,7 +57,7 @@ impl Expr {
         match self {
             Expr::Number(n) => n.ty.as_ref(),
             Expr::BinaryOp(b) => b.ty.as_ref(),
-            Expr::Print(p) => p.ty.as_ref(),
+            // Expr::Print(p) => p.ty.as_ref(),
             Expr::String(s) => s.ty.as_ref(),
             Expr::Call(c) => c.ty.as_ref(),
             Expr::Const(c) => c.ty.as_ref(),
@@ -69,12 +69,12 @@ impl Expr {
             Expr::Block(b) => b.ty.as_ref(),
             Expr::If(i) => i.ty.as_ref(),
             Expr::While(w) => w.ty.as_ref(),
-            Expr::For(f) => f.ty.as_ref(),
             Expr::New(new_expr) => new_expr.ty.as_ref(),
             Expr::MethodCall(method_call_expr) => method_call_expr.ty.as_ref(),
             Expr::SelfExpr(self_expr) => self_expr.ty.as_ref(),
             Expr::Base(base_expr) => base_expr.ty.as_ref(),
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
+            //Expr::For(f) => f.ty.as_ref(),
         }
     }
 }
@@ -84,7 +84,6 @@ impl Node for Expr {
         match self {
             Expr::Number(n) => n.accept(visitor),
             Expr::BinaryOp(b) => b.accept(visitor),
-            Expr::Print(p) => p.accept(visitor),
             Expr::Call(call_expr) => call_expr.accept(visitor),
             Expr::Const(const_expr) => const_expr.accept(visitor),
             Expr::String(string_expr) => string_expr.accept(visitor),
@@ -96,7 +95,6 @@ impl Node for Expr {
             Expr::Block(b) => b.accept(visitor),
             Expr::If(i) => i.accept(visitor),
             Expr::While(w) => w.accept(visitor),
-            Expr::For(f) => f.accept(visitor),
             Expr::New(new_expr) => new_expr.accept(visitor),
             Expr::MethodCall(method_call_expr) => method_call_expr.accept(visitor),
             Expr::SelfExpr(self_expr) => self_expr.accept(visitor),
@@ -119,7 +117,7 @@ impl Node for NumberExpr {
     }
 }
 
-// OPERADORES BINARIOS
+// binary operators
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
     Add, Sub, Mul, Div, Pow, Concat, 
@@ -127,7 +125,7 @@ pub enum BinOp {
     And, Or, Mod, ConcatSpace,
 }
 
-// BINARY OP EXPR (operación binaria)
+// BINARY OP EXPR 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryOpExpr {
     pub left: Box<Expr>,
@@ -143,19 +141,6 @@ impl Node for BinaryOpExpr {
     }
 }
 
-// PRINT EXPR (llamada a print)
-#[derive(Debug, Clone, PartialEq)]
-pub struct PrintExpr {
-    pub argument: Box<Expr>,
-    pub span: Span,
-    pub ty: Option<HulkType>,
-}
-
-impl Node for PrintExpr {
-    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
-        visitor.visit_print(self)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringExpr {
@@ -310,20 +295,6 @@ impl Node for WhileExpr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ForExpr {
-    pub var: String,
-    pub iterable: Box<Expr>,
-    pub body: Box<Expr>,
-    pub span: Span,
-    pub ty: Option<HulkType>,
-}
-
-impl Node for ForExpr {
-    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
-        visitor.visit_for(self)
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewExpr {
     pub type_name: String,

@@ -50,8 +50,11 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_function_def(&mut self, func: &mut FunctionDef) {
-        let params = func.params.join(", ");
+    fn visit_function_def(&mut self, func: &mut FunctionDef) { //ARREGLAR
+        let params: Vec<String> = func.params.iter()
+            .map(|p| format!("{}: ?", p.name))
+            .collect();
+        let params = params.join(", ");
         self.write_line(&format!("FunctionDef {{ name: '{}', params: [{}]", func.name, params));
         self.indent += 1;
         self.write_line("body:");
@@ -81,13 +84,13 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_print(&mut self, p: &mut PrintExpr) {
-        self.write_line("Print {");
-        self.indent += 1;
-        p.argument.accept(self);
-        self.indent -= 1;
-        self.write_line("}");
-    }
+    // fn visit_print(&mut self, p: &mut PrintExpr) {
+    //     self.write_line("Print {");
+    //     self.indent += 1;
+    //     p.argument.accept(self);
+    //     self.indent -= 1;
+    //     self.write_line("}");
+    // }
     
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
         self.write_line(&format!("String({:?})", expr.value));
@@ -212,21 +215,7 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        self.write_line(&format!("For {{ var: {}", expr.var));
-        self.indent += 1;
-        self.write_line("iterable:");
-        self.indent += 1;
-        expr.iterable.accept(self);
-        self.indent -= 1;
-        self.write_line("body:");
-        self.indent += 1;
-        expr.body.accept(self);
-        self.indent -= 1;
-        self.indent -= 1;
-        self.write_line("}");
-    }
-    
+      
     fn visit_type_def(&mut self, ty: &mut TypeDef) {
         let parent_str = match &ty.parent {
             Some(parent) => format!(" inherits {}(...)", parent.name), // simplificado, luego mejoramos
@@ -356,4 +345,19 @@ impl Visitor for PrettyPrinter {
         self.indent -= 1;
         self.write_line("}");
     }
+    // fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+    //     self.write_line(&format!("For {{ var: {}", expr.var));
+    //     self.indent += 1;
+    //     self.write_line("iterable:");
+    //     self.indent += 1;
+    //     expr.iterable.accept(self);
+    //     self.indent -= 1;
+    //     self.write_line("body:");
+    //     self.indent += 1;
+    //     expr.body.accept(self);
+    //     self.indent -= 1;
+    //     self.indent -= 1;
+    //     self.write_line("}");
+    // }
+
 }

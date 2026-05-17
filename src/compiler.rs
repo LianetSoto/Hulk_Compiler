@@ -3,7 +3,7 @@ use crate::parser::parse_program;
 use crate::semantic::TypeChecker;
 use crate::codegen::LlvmCodeGen;
 use crate::gen_lex::lexer::build_lexer;
-use crate::ast::{PrettyPrinter, Node};          // <-- NUEVA IMPORTACIÓN
+use crate::ast::{PrettyPrinter, Node};
 use inkwell::context::Context;
 use std::process::Command;
 use std::process;
@@ -20,7 +20,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
     let source_map = SourceMap::new(source_code.to_string());
 
     let patterns = vec![
-        // --- Palabras Reservadas ---
+        // --- Reserved Keywords ---
         ("Let", "let"),
         ("In", "in"),
         ("If", "if"),
@@ -42,7 +42,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         ("Exp", "exp"),
         ("Rand", "rand"),
 
-        // --- Multi-char operators (longest match first) ---
+        // --- Multi‑character operators (longest match first) ---
         ("Arrow", "=>"),
         ("Eq", "="),
         ("Assign", ":="),
@@ -51,7 +51,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         ("Leq", "<="),
         ("Geq", ">="),
 
-        // --- Single-char operators ---
+        // --- Single‑character operators ---
         ("Lt", "<"),
         ("Gt", ">"),
         ("And", "&"),
@@ -64,7 +64,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         ("Percent", "%"),
         ("Power", "^"),
         
-        // --- Símbolos de Puntuación ---
+        // --- Punctuation Symbols ---
         ("LParen", "("),
         ("RParen", ")"),
         ("LBrace", "{"),
@@ -73,17 +73,13 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         ("Semicolon", ";"),
         ("COLON", ":"),
 
-        // --- Literales Complejos ---
-        // Los números y los identificadores se tokenizan directamente en el lexer.
+        // --- Complex Literals ---
+        // Numbers and identifiers are tokenized directly in the lexer.
     ];
 
     let lexer = build_lexer(patterns);
     let tokens = lexer.tokenize(source_code);
-    for (i, token) in tokens.iter().enumerate() {
-        if token.0 >= 330 && token.0 <= 360 {
-            println!("TOKEN {}: {:?}", i, token);
-        }
-    }
+    
     // 1. Syntactic analysis (parsing)
     let mut ast = match parse_program(tokens) {
         Ok(prog) => prog,
@@ -93,7 +89,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         }
     };
 
-    // ---- IMPRESIÓN DEL AST (SI SE SOLICITA) ----
+    // ---- AST PRINTING (IF REQUESTED) ----
     if print_ast {
         let mut printer = PrettyPrinter::new();
         ast.accept(&mut printer);
@@ -126,7 +122,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
 /// Compiles the LLVM IR file to an executable and runs it.
 fn compile_and_run(ir_file: &str, exec_path: &str) -> Result<(), CompilerError> {
-    // Compilar IR a ejecutable con clang
+    // Compile IR to executable using clang
     let clang_output = Command::new("clang-15")
         .args(&[ir_file, "-o", exec_path, "-lm"])
         .output()

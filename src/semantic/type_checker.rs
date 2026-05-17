@@ -84,25 +84,26 @@ impl Visitor for TypeChecker {
     type Result = HulkType;
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        // 1. Register and analyze all function definitions to know their return types
+        // 1. Register and analyze all functions
         for func in &mut program.functions {
-            // Verify duplicate function names
+            // Check for duplicate function names
             if self.functions.contains_key(&func.name) {
                 self.add_type_error(
                     format!("Duplicate function '{}'", func.name),
                     func.span,
                 );
             } else {
+                // Insert function info (number of parameters, return type unknown yet)
                 self.functions.insert(func.name.clone(), FunctionInfo {
                     params_len: func.params.len(),
                     return_type: None,
                 });
             }
-            // Analyze function body to infer return type
+            // Analyze the function body (type checking and inference)
             func.accept(self);
         }
 
-        // 2. Analyze principal expression and return its type
+        // 2. Analyze the main expression and return its type
         let main_ty = program.main_expr.accept(self);
         main_ty
     }
@@ -205,21 +206,6 @@ impl Visitor for TypeChecker {
         result_ty
     }
 
-    fn visit_print(&mut self, expr: &mut PrintExpr) -> Self::Result {
-        let arg_type = expr.argument.accept(self);
-        if !arg_type.is_compatible_with(&HulkType::Number) &&
-           !arg_type.is_compatible_with(&HulkType::String) &&
-           !arg_type.is_compatible_with(&HulkType::Boolean) {
-            self.add_type_error(
-                "print argument must be Number, String or Boolean".to_string(),
-                expr.argument.span()
-            );
-        }
-        let ty = arg_type; 
-        expr.ty = Some(ty.clone());
-        ty
-    }
-
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
         let ty = HulkType::String;
         expr.ty = Some(ty.clone());
@@ -297,8 +283,29 @@ impl Visitor for TypeChecker {
                         self.add_type_error("range end must be Number".to_string(), expr.args[1].span());
                     }
                 }
-                // range devuelve un iterable (por ahora tratamos como Number o podrías definir un tipo especial)
+                // range returns an iterable (for now we treat it as Number)
                 HulkType::Object
+            }
+            "print" => {
+                if expr.args.len() != 1 {
+                    self.add_type_error(
+                        "print expects 1 argument".to_string(),
+                        expr.span
+                    );
+                    HulkType::Error
+                } else {
+                    let arg_ty = expr.args[0].accept(self);
+                    if !arg_ty.is_compatible_with(&HulkType::Number) &&
+                    !arg_ty.is_compatible_with(&HulkType::String) &&
+                    !arg_ty.is_compatible_with(&HulkType::Boolean) {
+                        self.add_type_error(
+                            "print argument must be Number, String or Boolean".to_string(),
+                            expr.args[0].span()
+                        );
+                    }
+                    // print returns the type of its argument
+                    arg_ty
+                }
             }
             _ => {
                 if let Some(func_info) = self.functions.get(&expr.func).cloned() {
@@ -493,28 +500,38 @@ impl Visitor for TypeChecker {
         body_ty
     }
 
-    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-        let iterable_ty = expr.iterable.accept(self);
-        if !iterable_ty.is_compatible_with(&HulkType::Object) && !iterable_ty.is_compatible_with(&HulkType::Number) {
-            self.add_type_error(
-                "For iterable must be a range or iterable object".to_string(),
-                expr.iterable.span(),
-            );
-        }
+    // fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
+    //     let mut seen_params = HashSet::new();
+    //     for param in &func.params {
+    //         if !seen_params.insert(param.name.clone()) {
+    //             self.add_type_error(
+    //                 format!("Duplicate parameter name '{}' in function '{}'", param.name.clone(), func.name),
+    //                 func.span,
+    //             );
+    //         }
+    //     }
 
-        self.declare_var(expr.var.clone(), HulkType::Number);
-        let body_ty = expr.body.accept(self);
+    //     self.enter_scope();
+    //     for param in &func.params {
+    //         self.declare_var(param.name.clone(), HulkType::Object);
+    //     }
 
-        expr.ty = Some(body_ty.clone());
-        body_ty
-    }
-    
+    //     let body_ty = func.body.accept(self);
+    //     self.exit_scope();
+
+    //     func.ty = Some(body_ty.clone());
+    //     if let Some(func_info) = self.functions.get_mut(&func.name) {
+    //         func_info.return_type = Some(body_ty.clone());
+    //     }
+
+    //     body_ty
+    // }
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
         let mut seen_params = HashSet::new();
         for param in &func.params {
-            if !seen_params.insert(param) {
+            if !seen_params.insert(param.name.clone()) {
                 self.add_type_error(
-                    format!("Duplicate parameter name '{}' in function '{}'", param, func.name),
+                    format!("Duplicate parameter name '{}' in function '{}'", param.name.clone(), func.name),
                     func.span,
                 );
             }
@@ -522,7 +539,8 @@ impl Visitor for TypeChecker {
 
         self.enter_scope();
         for param in &func.params {
-            self.declare_var(param.clone(), HulkType::Object);
+            // Cambio: los parámetros ahora son de tipo Number en lugar de Object
+            self.declare_var(param.name.clone(), HulkType::Number);
         }
 
         let body_ty = func.body.accept(self);
