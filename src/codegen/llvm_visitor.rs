@@ -535,25 +535,26 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
         // Look up the variable (TypeChecker already verified it exists)
-        match self.lookup_var(&expr.name) {
-            Some(ptr) => {
-                // Evaluate the right‑hand side
-                let new_val = expr.value.accept(self)?;
+        // match self.lookup_var(&expr.name) {
+        //     Some(ptr) => {
+        //         // Evaluate the right‑hand side
+        //         let new_val = expr.value.accept(self)?;
 
-                // Store the new value into the variable's location
-                self.builder.build_store(ptr, new_val)
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: e.to_string(),
-                        span: Some(expr.span),
-                    })?;
+        //         // Store the new value into the variable's location
+        //         self.builder.build_store(ptr, new_val)
+        //             .map_err(|e| CompilerError::CodegenError {
+        //                 msg: e.to_string(),
+        //                 span: Some(expr.span),
+        //             })?;
 
-                Ok(new_val)   // assignment returns the assigned value in HULK
-            }
-            None => Err(CompilerError::CodegenError {
-                msg: format!("cannot assign to undefined variable '{}'", expr.name),
-                span: Some(expr.span),
-            }),
-        }
+        //         Ok(new_val)   // assignment returns the assigned value in HULK
+        //     }
+        //     None => Err(CompilerError::CodegenError {
+        //         msg: format!("cannot assign to undefined variable '{}'", expr.name),
+        //         span: Some(expr.span),
+        //     }),
+        // }
+        todo!()
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
@@ -730,5 +731,42 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(phi.as_basic_value().into())
     }   
+    
+    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_method(&mut self, m: &mut Method) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_attribute_access(&mut self, e: &mut expr::AttributeAccessExpr) -> Self::Result {
+        todo!()
+    }
+
   
 }

@@ -4,6 +4,7 @@ pub enum HulkType {
     String,
     Boolean,
     Object,
+    UserDefined(String), 
     Error,
 }
 
@@ -16,7 +17,6 @@ impl HulkType {
             (HulkType::Boolean, HulkType::Boolean) => true,
             (HulkType::Object, _) => true,
             (_, HulkType::Object) => true,
-            // En el futuro: Object y subtipado
             _ => false,
         }
     }
