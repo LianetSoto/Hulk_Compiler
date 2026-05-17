@@ -1,4 +1,4 @@
-use crate::ast::*;
+use crate::ast::{expr::AttributeAccessExpr, *};
 
 pub trait Visitor {
     
@@ -22,4 +22,12 @@ pub trait Visitor {
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result;
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result;
     fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result;
+    fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result;
+    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result;
+    fn visit_method(&mut self, m: &mut Method) -> Self::Result;
+    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result;
+    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result;
+    fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result;
+    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result;
+    fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result;
 }

@@ -1,10 +1,11 @@
-use crate::ast::{Node, Visitor, FunctionDef, Expr};
+use crate::ast::{Node, Visitor, FunctionDef, Expr,TypeDef};
 use crate::error::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub functions: Vec<FunctionDef>,  // Funciones primero
-    pub main_expr: Box<Expr>,         // Luego una sola expresión principal
+    pub types: Vec<TypeDef>,
+    pub functions: Vec<FunctionDef>,
+    pub main_expr: Box<Expr>,
     pub span: Span,
 }
 
