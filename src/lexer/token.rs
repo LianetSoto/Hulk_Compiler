@@ -36,7 +36,7 @@ pub enum Token {
     ConcatSpace,
     Percent,
 
-    // revisar
+    // Assignment and comparison
     Eq, 
     Assign,
     Arrow,
@@ -51,11 +51,11 @@ pub enum Token {
     Not,
 
 
-    // Constantes matemáticas
+    // Constants
     Pi,
     E,
 
-    // Funciones matemáticas built‑in
+    // Arithmetic built‑in functions
     Sin,
     Cos,
     Tan,
@@ -64,13 +64,24 @@ pub enum Token {
     Exp,
     Rand,
 
+    // Types and OOP
+    Type,
+    Inherits,
+    SelfKeyword,
+    BaseKeyword,
+    New,
+    NumberType,   // "Number"
+    StringType,   // "String"
+    BooleanType,  // "Boolean"
+    ObjectType,   // "Object"
+
      // Identifiers
     Identifier(String),    
 
     // Regular expression patterns
     Number(f64),
 
-    // Cadenas con escapes básicos
+    // String literals
     Str(String),
 }
 
@@ -129,6 +140,15 @@ impl fmt::Display for Token {
             Token::Rand => write!(f, "rand"),
             Token::Number(v) => write!(f, "{}", v),
             Token::Str(s) => write!(f, "\"{}\"", s),
+            Token::Type => write!(f, "type"),
+            Token::Inherits => write!(f, "inherits"),
+            Token::SelfKeyword => write!(f, "self"),
+            Token::BaseKeyword => write!(f, "base"),
+            Token::New => write!(f, "new"),
+            Token::NumberType => write!(f, "Number"),
+            Token::StringType => write!(f, "String"),
+            Token::BooleanType => write!(f, "Boolean"),
+            Token::ObjectType => write!(f, "Object"),
         }
     }
 }

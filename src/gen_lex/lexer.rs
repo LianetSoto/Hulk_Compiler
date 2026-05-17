@@ -125,6 +125,12 @@ impl Lexer {
                     "false" => LexerToken::False,
                     "PI" => LexerToken::Pi,
                     "E" => LexerToken::E,
+                    "type" => LexerToken::Type,
+                    "self" => LexerToken::SelfKeyword,
+                    "base" => LexerToken::BaseKeyword,
+                    "inherits" => LexerToken::Inherits,
+                    "new" => LexerToken::New,
+                    
                     _ => LexerToken::Identifier(token_value),
                 };
                 tokens.push((start, lexer_token, i));
@@ -169,6 +175,13 @@ impl Lexer {
                 continue;
             }
 
+            // Dot operator
+            if chars[i] == '.' {
+                tokens.push((i, LexerToken::Dot, i + 1));
+                i += 1;
+                continue;
+            }
+
             let mut current_state = 0;
             let mut last_accept_state: Option<usize> = None;
             let mut last_accept_pos: Option<usize> = None;
@@ -209,6 +222,9 @@ impl Lexer {
                     "False" => LexerToken::False,
                     "Pi" => LexerToken::Pi,
                     "E" => LexerToken::E,
+                    "Type" => LexerToken::Type,
+                    "Self" => LexerToken::SelfKeyword,
+                    "Base" => LexerToken::BaseKeyword,
                     "Sin" => LexerToken::Sin,
                     "Cos" => LexerToken::Cos,
                     "Tan" => LexerToken::Tan,
@@ -241,6 +257,8 @@ impl Lexer {
                     "Comma" => LexerToken::Comma,
                     "Semicolon" => LexerToken::Semicolon,
                     "COLON" => LexerToken::Colon,
+                    "Dot" => LexerToken::Dot,
+                    "New" => LexerToken::New,
                     _ => {
                         // For unknown, perhaps skip or error
                         i += 1;
