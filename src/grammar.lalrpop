@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::lexer::Token;
 use crate::error::CompilerError;
 use crate::error::Span;
+use crate::semantic::types::HulkType;
 
 grammar;
 
@@ -24,6 +25,8 @@ extern {
         "}"      => Token::RBrace,
         ";"      => Token::Semicolon,
         ","      => Token::Comma,
+        ":"      => Token::Colon,
+        "."      => Token::Dot,
         "print"  => Token::Print,
         "string" => Token::Str(<String>),
         "let"    => Token::Let,
@@ -52,6 +55,15 @@ extern {
         "for"    => Token::For,
         "function" => Token::Function,
         "=>" => Token::Arrow,
+        "type"   => Token::Type,
+        "inherits" => Token::Inherits,
+        "self"   => Token::SelfKeyword,
+        "base"   => Token::BaseKeyword,
+        "new"    => Token::New,
+        "Number" => Token::NumberType,
+        "String" => Token::StringType,
+        "Boolean"=> Token::BooleanType,
+        "Object" => Token::ObjectType,
     }
 }
 
@@ -65,6 +77,95 @@ Comma<T>: Vec<T> = {
     }
 };
 
+Type: HulkType = {
+    "Number"  => HulkType::Number,
+    "String"  => HulkType::String,
+    "Boolean" => HulkType::Boolean,
+    "Object"  => HulkType::Object,
+    <id:"identifier"> => HulkType::UserDefined(id),
+};
+
+// Attribute: name [: Type] = expr ;
+Attribute: Attribute = {
+    <start:@L> <name:"identifier"> <ty:(":" <Type>)?> "=" <init:Expr> ";" <end:@R> => {
+        Attribute {
+            name,
+            ty_annotation: ty,
+            init_expr: init,
+            span: Span::new(start, end),
+        }
+    }
+};
+
+MethodParam: MethodParam = {
+    <start:@L> <name:"identifier"> <ty:(":" <Type>)?> <end:@R> => {
+        MethodParam {
+            name,
+            ty_annotation: ty,
+            span: Span::new(start, end),
+        }
+    }
+};
+
+MethodParams: Vec<MethodParam> = {
+    <params:Comma<MethodParam>> => params,
+};
+
+Method: Method = {
+    // Simple body (with =>)
+    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ty:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
+        Method {
+            name,
+            params,
+            return_ty: ret_ty,
+            body,
+            span: Span::new(start, end),
+            ty: None,
+        }
+    },
+    // Block body (without =>)
+    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ty:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
+        Method {
+            name,
+            params,
+            return_ty: ret_ty,
+            body,
+            span: Span::new(start, end),
+            ty: None,
+        }
+    },
+};
+
+TypeMember: TypeMember = {
+    <a:Attribute> => TypeMember::Attribute(a),
+    <m:Method> => TypeMember::Method(m),
+};
+
+TypeMembers: Vec<TypeMember> = {
+    <mut v:(<TypeMember>)*> => {
+        let mut vec = v;
+        vec
+    }
+};
+
+// Arguments for the parent type (optional)
+ParentArgs: Vec<Box<Expr>> = {
+    "(" <args:Comma<Expr>> ")" => args,
+};
+
+// Inheritance specification: "inherits" + Type + optional arguments
+ParentSpec: Parent = {
+    <start:@L> "inherits" <name:Type> <args:ParentArgs?> <end:@R> => {
+        Parent {
+            name: match name {
+                HulkType::UserDefined(s) => s,
+                _ => panic!("Parent type must be user-defined"), // o maneja error
+            },
+            args: args.unwrap_or_default(),
+            span: Span::new(start, end),
+        }
+    }
+};
 
 // Function parameters
 FunctionParams: Vec<String> = {
@@ -77,29 +178,62 @@ FunctionParam: String = {
 
 // Function definition
 FunctionDef: FunctionDef = {
-    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" "=>" <body:SimpleExpr> ";" <end:@R> => {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ty:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
         FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
-            ty: None,
+            ty: ret_ty,
         }
     },
-    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <body:BlockExpr> <semi:";"?> <end:@R> => {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ty:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
         FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
-            ty: None,
+            ty: ret_ty,
         }
     },
 };
 
+ // Type parameters (identifiers only)
+TypeParam: String = {
+    <id:"identifier"> => id
+};
+
+TypeParams: Vec<String> = {
+    <params:Comma<TypeParam>> => params,
+};
+
+TypeDef: TypeDef = {
+    <start:@L> "type" <name:"identifier"> <params:("(" <TypeParams> ")")?>
+    <parent:ParentSpec?>
+    "{" <members:TypeMembers> "}" <end:@R> => {
+        let mut attrs = vec![];
+        let mut meths = vec![];
+        for m in members {
+            match m {
+                TypeMember::Attribute(a) => attrs.push(a),
+                TypeMember::Method(m) => meths.push(m),
+            }
+        }
+        TypeDef {
+            name,
+            parent,
+            attributes: attrs,
+            methods: meths,
+            span: Span::new(start, end),
+            ty: None,
+        }
+    }
+};
+
 pub Program: Box<Program> = {
-    <start:@L> <funcs:FunctionDef*> <main_expr:Expr> <end:@R> => {
+    <start:@L> <types:TypeDef*> <funcs:FunctionDef*> <main_expr:Expr> <end:@R> => {
         Box::new(Program {
+            types: types,
             functions: funcs,
             main_expr: main_expr,
             span: Span::new(start, end),
@@ -381,7 +515,28 @@ UnaryExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
+    <e:PostfixExpr> => e,
+};
+
+PostfixExpr: Box<Expr> = {
     <e:AtomicExpr> => e,
+    <start:@L> <obj:PostfixExpr> "." <m:"identifier"> <end:@R> => {
+        Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+            object: obj,
+            attribute: m,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    },
+    <start:@L> <obj:PostfixExpr> "." <m:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
+        Box::new(Expr::MethodCall(MethodCallExpr {
+            object: obj,
+            method: m,
+            args,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    },
 };
 
 //Atomic level
@@ -433,6 +588,30 @@ AtomicExpr: Box<Expr> = {
             ty: None,
         }))
     },
+
+    <start:@L> "new" <ty:Type> "(" <args:Comma<Expr>> ")" <end:@R> => {
+        let type_name = match ty {
+            HulkType::UserDefined(s) => s,
+            _ => panic!("new solo aplica a tipos definidos por el usuario"),
+        };
+        Box::new(Expr::New(NewExpr {
+            type_name,
+            args,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    },
+
+     // self and base
+    <start:@L> "self" <end:@R> => Box::new(Expr::SelfExpr(SelfExpr {
+        span: Span::new(start, end),
+        ty: None,
+    })),
+
+    <start:@L> "base" <end:@R> => Box::new(Expr::Base(BaseExpr {
+        span: Span::new(start, end),
+        ty: None,
+    })),
 
     //id
     <start:@L> <id:"identifier"> <end:@R> => Box::new(Expr::Variable(VariableExpr {
