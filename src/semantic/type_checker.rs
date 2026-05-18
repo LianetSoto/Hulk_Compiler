@@ -4,10 +4,12 @@ use crate::error::CompilerError;
 use super::types::HulkType;
 use crate::error::Span;
 use std::collections::{HashMap, HashSet};
+use crate::semantic::inference::Unifier;
 
 #[derive(Clone)]
 struct FunctionInfo {
     params_len: usize,
+    param_types: Option<Vec<HulkType>>,
     return_type: Option<HulkType>,
 }
 
@@ -15,6 +17,9 @@ pub struct TypeChecker {
     errors: Vec<CompilerError>,
     scopes: Vec<HashMap<String, HulkType>>,
     functions: HashMap<String, FunctionInfo>,
+    unifier: Unifier,               // para gestionar variables de tipo
+    param_vars: HashMap<String, Vec<HulkType>>, // para cada función, lista de variables de tipo de sus parámetros
+    return_var: HashMap<String, HulkType>,      // variable de tipo para el retorno
 }
 
 impl TypeChecker {
@@ -25,11 +30,40 @@ impl TypeChecker {
             errors: Vec::new(),
             scopes,
             functions: HashMap::new(),
+            unifier: Unifier::default(),
+            param_vars: HashMap::new(),
+            return_var: HashMap::new()
         }
     }
 
     pub fn check(&mut self, program: &mut Program) -> Result<(), Vec<CompilerError>> {
-        program.accept(self);
+        // 1. Registrar nombres de funciones y crear variables de tipo para parámetros y retorno
+        for func in &program.functions {
+            self.functions.insert(func.name.clone(), FunctionInfo {
+                params_len: func.params.len(),
+                return_type: None,
+                param_types: None// lo llenaremos después de inferir
+            });
+        }
+        self.prepare_function_vars(program);
+
+        // 2. Inferir tipos función por función (esto visita los cuerpos)
+        for func in &mut program.functions {
+            func.accept(self);
+            // Después de visitar, ya tenemos los tipos resueltos en func.params[].ty
+            // Guardar los tipos resueltos en self.functions para usarlos en llamadas
+            let param_types: Vec<HulkType> = func.params.iter()
+                .map(|p| p.ty.as_ref().unwrap().clone())
+                .collect();
+            if let Some(info) = self.functions.get_mut(&func.name) {
+                info.param_types = Some(param_types);
+                info.return_type = func.ty.clone();
+            }
+        }
+
+        // 3. Verificar la expresión principal (main_expr)
+        program.main_expr.accept(self);
+
         if self.errors.is_empty() {
             Ok(())
         } else {
@@ -69,36 +103,53 @@ impl TypeChecker {
         }
         None
     }
+
+    fn prepare_function_vars(&mut self, program: &Program) {
+        for func in &program.functions {
+            let mut param_vars = Vec::new();
+            for _ in &func.params {
+                param_vars.push(self.unifier.new_var());
+            }
+            let ret_var = self.unifier.new_var();
+
+            // Guardar en los mapas auxiliares (ya los tienes)
+            self.param_vars.insert(func.name.clone(), param_vars.clone());
+            self.return_var.insert(func.name.clone(), ret_var.clone());
+
+            // IMPORTANTE: actualizar self.functions con estas variables
+            if let Some(info) = self.functions.get_mut(&func.name) {
+                info.param_types = Some(param_vars);
+                info.return_type = Some(ret_var);
+            }
+        }
+    }
 }
 
 impl Visitor for TypeChecker {
     type Result = HulkType;
 
+    
+
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        // 1. Register and analyze all functions
+        // Registrar funciones
+        for func in &program.functions {
+            self.functions.insert(func.name.clone(), FunctionInfo {
+                params_len: func.params.len(),
+                param_types: None,
+                return_type: None,
+            });
+        }
+        self.prepare_function_vars(program);
+
+        // Inferir funciones
         for func in &mut program.functions {
-            // Check for duplicate function names
-            if self.functions.contains_key(&func.name) {
-                self.add_type_error(
-                    format!("Duplicate function '{}'", func.name),
-                    func.span,
-                );
-            } else {
-                // Insert function info (number of parameters, return type unknown yet)
-                self.functions.insert(func.name.clone(), FunctionInfo {
-                    params_len: func.params.len(),
-                    return_type: None,
-                });
-            }
-            // Analyze the function body (type checking and inference)
             func.accept(self);
         }
 
-        // 2. Analyze the main expression and return its type
+        // Expresión principal
         let main_ty = program.main_expr.accept(self);
         main_ty
     }
-
 
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
         let ty = HulkType::Number;
@@ -107,94 +158,68 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
-        let left_type = expr.left.accept(self);
-        let right_type = expr.right.accept(self);
+        let left_ty = expr.left.accept(self);
+        let right_ty = expr.right.accept(self);
+        let result_var = self.unifier.new_var();
 
-        let result_ty = match expr.op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod=> {
-                if !left_type.is_compatible_with(&HulkType::Number) {
-                    self.add_type_error(
-                        "Left operand of arithmetic operator must be Number".to_string(),
-                        expr.left.span()
-                    );
+        match expr.op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod => {
+                if let Err(msg) = self.unifier.unify(&left_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.left.span());
                 }
-                if !right_type.is_compatible_with(&HulkType::Number) {
-                    self.add_type_error(
-                        "Right operand of arithmetic operator must be Number".to_string(),
-                        expr.right.span()
-                    );
+                if let Err(msg) = self.unifier.unify(&right_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.right.span());
                 }
-                HulkType::Number
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::Number) {
+                    self.add_type_error(msg, expr.span);
+                }
             }
-
             BinOp::Concat | BinOp::ConcatSpace => {
-                let left_ok = left_type.is_compatible_with(&HulkType::String) ||
-                            left_type.is_compatible_with(&HulkType::Number);
-                let right_ok = right_type.is_compatible_with(&HulkType::String) ||
-                            right_type.is_compatible_with(&HulkType::Number);
-                if !left_ok {
-                    self.add_type_error(
-                        "Left operand of @ must be String or Number".to_string(),
-                        expr.left.span()
-                    );
+                if let Err(msg) = self.unifier.unify(&left_ty, &HulkType::String) {
+                    self.add_type_error(msg, expr.left.span());
                 }
-                if !right_ok {
-                    self.add_type_error(
-                        "Right operand of @ must be String or Number".to_string(),
-                        expr.right.span()
-                    );
+                if let Err(msg) = self.unifier.unify(&right_ty, &HulkType::String) {
+                    self.add_type_error(msg, expr.right.span());
                 }
-                HulkType::String
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::String) {
+                    self.add_type_error(msg, expr.span);
+                }
             }
-
-            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
-                match expr.op {
-                    BinOp::Eq | BinOp::Neq => {
-                        if !left_type.is_compatible_with(&right_type) {
-                            self.add_type_error(
-                                format!("Cannot compare {:?} with {:?}", left_type, right_type),
-                                expr.span
-                            );
-                        }
-                    }
-                    _ => {
-                        // <, >, <=, >= just for numbers
-                        if !left_type.is_compatible_with(&HulkType::Number) {
-                            self.add_type_error(
-                                "Left operand of comparison must be Number".to_string(),
-                                expr.left.span()
-                            );
-                        }
-                        if !right_type.is_compatible_with(&HulkType::Number) {
-                            self.add_type_error(
-                                "Right operand of comparison must be Number".to_string(),
-                                expr.right.span()
-                            );
-                        }
-                    }
+            BinOp::Eq | BinOp::Neq => {
+                if let Err(msg) = self.unifier.unify(&left_ty, &right_ty) {
+                    self.add_type_error(msg, expr.span);
                 }
-                HulkType::Boolean
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.span);
+                }
             }
-
+            BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
+                if let Err(msg) = self.unifier.unify(&left_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.left.span());
+                }
+                if let Err(msg) = self.unifier.unify(&right_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.right.span());
+                }
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.span);
+                }
+            }
             BinOp::And | BinOp::Or => {
-                if !left_type.is_compatible_with(&HulkType::Boolean) {
-                    self.add_type_error(
-                        "Left operand of logical operator must be Boolean".to_string(),
-                        expr.left.span()
-                    );
+                if let Err(msg) = self.unifier.unify(&left_ty, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.left.span());
                 }
-                if !right_type.is_compatible_with(&HulkType::Boolean) {
-                    self.add_type_error(
-                        "Right operand of logical operator must be Boolean".to_string(),
-                        expr.right.span()
-                    );
+                if let Err(msg) = self.unifier.unify(&right_ty, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.right.span());
                 }
-                HulkType::Boolean
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.span);
+                }
             }
-        };
+        }
 
-        expr.ty = Some(result_ty.clone());
-        result_ty
+        let final_ty = self.unifier.resolve(&result_var);
+        expr.ty = Some(final_ty.clone());
+        final_ty
     }
 
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
@@ -210,129 +235,104 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
-        let result_ty = match expr.func.as_str() {
+        match expr.func.as_str() {
             "sin" | "cos" | "sqrt" | "exp" => {
                 if expr.args.len() != 1 {
-                    self.add_type_error(
-                        "Function takes 1 argument".to_string(),
-                        expr.span
-                    );
-                } else {
-                    let arg_ty = expr.args[0].accept(self);
-                    if !arg_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_type_error(
-                            "Argument must be Number".to_string(),
-                            expr.args[0].span()
-                        );
-                    }
+                    self.add_type_error("Function takes 1 argument".into(), expr.span);
+                    return HulkType::Error;
                 }
-                HulkType::Number
+                let arg_ty = expr.args[0].accept(self);
+                if let Err(msg) = self.unifier.unify(&arg_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.args[0].span());
+                }
+                let ret_ty = HulkType::Number;
+                expr.ty = Some(ret_ty.clone());
+                ret_ty
             }
             "rand" => {
                 if !expr.args.is_empty() {
-                    self.add_type_error(
-                        "rand takes 0 arguments".to_string(),
-                        expr.span
-                    );
+                    self.add_type_error("rand takes 0 arguments".into(), expr.span);
+                    return HulkType::Error;
                 }
-                HulkType::Number
+                let ret_ty = HulkType::Number;
+                expr.ty = Some(ret_ty.clone());
+                ret_ty
             }
             "log" => {
                 if expr.args.len() != 2 {
-                    self.add_type_error(
-                        "log expects 2 arguments (base, value)".to_string(),
-                        expr.span
-                    );
-                } else {
-                    let base_ty = expr.args[0].accept(self);
-                    let val_ty = expr.args[1].accept(self);
-                    if !base_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_type_error(
-                            "log base must be Number".to_string(),
-                            expr.args[0].span()
-                        );
-                    }
-                    if !val_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_type_error(
-                            "log value must be Number".to_string(),
-                            expr.args[1].span()
-                        );
-                    }
+                    self.add_type_error("log expects 2 arguments".into(), expr.span);
+                    return HulkType::Error;
                 }
-                HulkType::Number
+                let base_ty = expr.args[0].accept(self);
+                let val_ty = expr.args[1].accept(self);
+                if let Err(msg) = self.unifier.unify(&base_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.args[0].span());
+                }
+                if let Err(msg) = self.unifier.unify(&val_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.args[1].span());
+                }
+                let ret_ty = HulkType::Number;
+                expr.ty = Some(ret_ty.clone());
+                ret_ty
             }
             "range" => {
                 if expr.args.len() != 2 {
-                    self.add_type_error("range expects 2 arguments (start, end)".to_string(), expr.span);
-                } else {
-                    let start_ty = expr.args[0].accept(self);
-                    let end_ty = expr.args[1].accept(self);
-                    if !start_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_type_error("range start must be Number".to_string(), expr.args[0].span());
-                    }
-                    if !end_ty.is_compatible_with(&HulkType::Number) {
-                        self.add_type_error("range end must be Number".to_string(), expr.args[1].span());
-                    }
+                    self.add_type_error("range expects 2 arguments".into(), expr.span);
+                    return HulkType::Error;
                 }
-                // range returns an iterable (for now we treat it as Number)
-                HulkType::Object
+                let start_ty = expr.args[0].accept(self);
+                let end_ty = expr.args[1].accept(self);
+                if let Err(msg) = self.unifier.unify(&start_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.args[0].span());
+                }
+                if let Err(msg) = self.unifier.unify(&end_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.args[1].span());
+                }
+                let ret_ty = HulkType::Object;
+                expr.ty = Some(ret_ty.clone());
+                ret_ty
             }
             "print" => {
                 if expr.args.len() != 1 {
-                    self.add_type_error(
-                        "print expects 1 argument".to_string(),
-                        expr.span
-                    );
-                    HulkType::Error
-                } else {
-                    let arg_ty = expr.args[0].accept(self);
-                    if !arg_ty.is_compatible_with(&HulkType::Number) &&
-                    !arg_ty.is_compatible_with(&HulkType::String) &&
-                    !arg_ty.is_compatible_with(&HulkType::Boolean) {
-                        self.add_type_error(
-                            "print argument must be Number, String or Boolean".to_string(),
-                            expr.args[0].span()
-                        );
-                    }
-                    // print returns the type of its argument
-                    arg_ty
+                    self.add_type_error("print expects 1 argument".into(), expr.span);
+                    return HulkType::Error;
                 }
+                let arg_ty = expr.args[0].accept(self);
+                expr.ty = Some(arg_ty.clone());
+                arg_ty
             }
             _ => {
+                // Función definida por el usuario
                 if let Some(func_info) = self.functions.get(&expr.func).cloned() {
                     if expr.args.len() != func_info.params_len {
                         self.add_type_error(
                             format!("Function '{}' expects {} arguments", expr.func, func_info.params_len),
                             expr.span,
                         );
+                        return HulkType::Error;
                     }
-
-                    for arg in &mut expr.args {
-                        arg.accept(self);
-                    }
-
-                    return match func_info.return_type {
-                        Some(ret_ty) => {
-                            expr.ty = Some(ret_ty.clone());
-                            ret_ty
-                        }
+                    let param_types = match func_info.param_types {
+                        Some(pts) => pts,
                         None => {
-                            expr.ty = Some(HulkType::Object);
-                            HulkType::Object
+                            self.add_type_error(format!("Function '{}' has not been inferred yet", expr.func), expr.span);
+                            return HulkType::Error;
                         }
                     };
+                    for (arg, expected) in expr.args.iter_mut().zip(param_types.iter()) {
+                        let arg_ty = arg.accept(self);
+                        if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
+                            self.add_type_error(msg, arg.span());
+                        }
+                    }
+                    let ret_ty = func_info.return_type.unwrap_or(HulkType::Object);
+                    expr.ty = Some(ret_ty.clone());
+                    ret_ty
+                } else {
+                    self.add_type_error(format!("Unknown function '{}'", expr.func), expr.span);
+                    HulkType::Error
                 }
-
-                self.add_type_error(
-                    format!("Unknown function '{}'", expr.func),
-                    expr.span
-                );
-                HulkType::Error
             }
-        };
-
-        expr.ty = Some(result_ty.clone());
-        result_ty
+        }
     }
 
     fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
@@ -343,28 +343,30 @@ impl Visitor for TypeChecker {
 
     fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
         let operand_ty = expr.expr.accept(self);
-        let result_ty = match expr.op {
+        let result_var = self.unifier.new_var();
+
+        match expr.op {
             UnaryOp::Not => {
-                if !operand_ty.is_compatible_with(&HulkType::Boolean) {
-                    self.add_type_error(
-                        "Negation (!) requires Boolean operand".to_string(),
-                        expr.span
-                    );
+                if let Err(msg) = self.unifier.unify(&operand_ty, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.expr.span());
                 }
-                HulkType::Boolean
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::Boolean) {
+                    self.add_type_error(msg, expr.span);
+                }
             }
             UnaryOp::Neg => {
-                if !operand_ty.is_compatible_with(&HulkType::Number) {
-                    self.add_type_error(
-                        "Unary negation (-) requires Number operand".to_string(),
-                        expr.span
-                    );
+                if let Err(msg) = self.unifier.unify(&operand_ty, &HulkType::Number) {
+                    self.add_type_error(msg, expr.expr.span());
                 }
-                HulkType::Number
+                if let Err(msg) = self.unifier.unify(&result_var, &HulkType::Number) {
+                    self.add_type_error(msg, expr.span);
+                }
             }
-        };
-        expr.ty = Some(result_ty.clone());
-        result_ty
+        }
+
+        let final_ty = self.unifier.resolve(&result_var);
+        expr.ty = Some(final_ty.clone());
+        final_ty
     }
 
     fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
@@ -386,161 +388,104 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
-        // Crear nuevo scope
         self.enter_scope();
-
-        // Declarar cada binding
         for (name, init_expr) in &mut expr.bindings {
             let init_ty = init_expr.accept(self);
             self.declare_var(name.clone(), init_ty);
         }
-
-        // Evaluar el cuerpo en el nuevo scope
         let body_ty = expr.body.accept(self);
-
-        // Salir del scope
         self.exit_scope();
-
-        // El tipo del let es el tipo del cuerpo
         expr.ty = Some(body_ty.clone());
         body_ty
     }
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        // Buscar la variable
         let var_ty = match self.lookup_var(&expr.name) {
             Some(ty) => ty,
             None => {
-                self.add_type_error(
-                    format!("Undefined variable '{}'", expr.name),
-                    expr.span
-                );
+                self.add_type_error(format!("Undefined variable '{}'", expr.name), expr.span);
                 HulkType::Error
             }
         };
-
-        // Evaluar el valor asignado
         let value_ty = expr.value.accept(self);
-
-        // Verificar compatibilidad de tipos
-        if var_ty != HulkType::Error && !value_ty.is_compatible_with(&var_ty) {
-            self.add_type_error(
-                format!("Cannot assign {:?} to variable of type {:?}", value_ty, var_ty),
-                expr.span
-            );
+        if let Err(msg) = self.unifier.unify(&value_ty, &var_ty) {
+            self.add_type_error(msg, expr.span);
         }
-
-        // El tipo de una asignación es el tipo del valor
-        expr.ty = Some(value_ty.clone());
-        value_ty
+        let final_ty = self.unifier.resolve(&value_ty);
+        expr.ty = Some(final_ty.clone());
+        final_ty
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
-
-        let mut result_ty = HulkType::Number; // Por defecto
-
-        // Evaluar cada expresión en orden
+        let mut last_ty = HulkType::Number; // fallback, pero HULK siempre tiene al menos una expresión
         for e in &mut expr.expressions {
-            result_ty = e.accept(self);
+            last_ty = e.accept(self);
         }
-
-        // El tipo del bloque es el tipo de la última expresión
-        expr.ty = Some(result_ty.clone());
-        result_ty
+        expr.ty = Some(last_ty.clone());
+        last_ty
     }
 
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
         let cond_ty = expr.condition.accept(self);
-        if !cond_ty.is_compatible_with(&HulkType::Boolean) {
-            self.add_type_error(
-                "If condition must be Boolean".to_string(),
-                expr.condition.span(),
-            );
+        if let Err(msg) = self.unifier.unify(&cond_ty, &HulkType::Boolean) {
+            self.add_type_error(msg, expr.condition.span());
         }
-
         let then_ty = expr.then_branch.accept(self);
         let else_ty = expr.else_branch.accept(self);
-
-        let result_ty = if then_ty.is_compatible_with(&else_ty) {
-            then_ty.clone()
-        } else {
-            self.add_type_error(
-                format!("If branches return incompatible types: {:?} vs {:?}", then_ty, else_ty),
-                expr.span,
-            );
-            HulkType::Error
-        };
-
-        expr.ty = Some(result_ty.clone());
-        result_ty
+        let result_var = self.unifier.new_var();
+        if let Err(msg) = self.unifier.unify(&then_ty, &else_ty) {
+            self.add_type_error(msg, expr.span);
+        }
+        if let Err(msg) = self.unifier.unify(&result_var, &then_ty) {
+            self.add_type_error(msg, expr.span);
+        }
+        let final_ty = self.unifier.resolve(&result_var);
+        expr.ty = Some(final_ty.clone());
+        final_ty
     }
 
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result {
         let cond_ty = expr.condition.accept(self);
-        if !cond_ty.is_compatible_with(&HulkType::Boolean) {
-            self.add_type_error(
-                "While condition must be Boolean".to_string(),
-                expr.condition.span(),
-            );
+        if let Err(msg) = self.unifier.unify(&cond_ty, &HulkType::Boolean) {
+            self.add_type_error(msg, expr.condition.span());
         }
-
         let body_ty = expr.body.accept(self);
-
         expr.ty = Some(body_ty.clone());
         body_ty
     }
 
-    // fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
-    //     let mut seen_params = HashSet::new();
-    //     for param in &func.params {
-    //         if !seen_params.insert(param.name.clone()) {
-    //             self.add_type_error(
-    //                 format!("Duplicate parameter name '{}' in function '{}'", param.name.clone(), func.name),
-    //                 func.span,
-    //             );
-    //         }
-    //     }
-
-    //     self.enter_scope();
-    //     for param in &func.params {
-    //         self.declare_var(param.name.clone(), HulkType::Object);
-    //     }
-
-    //     let body_ty = func.body.accept(self);
-    //     self.exit_scope();
-
-    //     func.ty = Some(body_ty.clone());
-    //     if let Some(func_info) = self.functions.get_mut(&func.name) {
-    //         func_info.return_type = Some(body_ty.clone());
-    //     }
-
-    //     body_ty
-    // }
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
-        let mut seen_params = HashSet::new();
-        for param in &func.params {
-            if !seen_params.insert(param.name.clone()) {
-                self.add_type_error(
-                    format!("Duplicate parameter name '{}' in function '{}'", param.name.clone(), func.name),
-                    func.span,
-                );
-            }
-        }
+        let param_vars = self.param_vars.get(&func.name).expect("No param vars").clone();
+        let ret_var = self.return_var.get(&func.name).expect("No return var").clone();
 
         self.enter_scope();
-        for param in &func.params {
-            // Cambio: los parámetros ahora son de tipo Number en lugar de Object
-            self.declare_var(param.name.clone(), HulkType::Number);
+        for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
+            param.ty = Some(var_ty.clone());
+            self.declare_var(param.name.clone(), var_ty.clone());
         }
 
         let body_ty = func.body.accept(self);
-        self.exit_scope();
 
-        func.ty = Some(body_ty.clone());
-        if let Some(func_info) = self.functions.get_mut(&func.name) {
-            func_info.return_type = Some(body_ty.clone());
+        if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
+            self.add_type_error(msg, func.span);
         }
 
-        body_ty
+        let resolved_params: Vec<HulkType> = param_vars.iter()
+            .map(|v| self.unifier.resolve(v))
+            .collect();
+        for (param, resolved) in func.params.iter_mut().zip(resolved_params.iter()) {
+            param.ty = Some(resolved.clone());
+        }
+
+        let resolved_ret = self.unifier.resolve(&ret_var);
+        func.ty = Some(resolved_ret.clone());
+
+        if let Some(info) = self.functions.get_mut(&func.name) {
+            info.param_types = Some(resolved_params);
+            info.return_type = Some(resolved_ret.clone());
+        }
+
+        self.exit_scope();
+        resolved_ret
     }
 }
