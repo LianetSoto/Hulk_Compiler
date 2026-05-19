@@ -105,6 +105,11 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         process::exit(1);
     }
 
+        
+    let mut printer = PrettyPrinter::new();
+    ast.accept(&mut printer);
+    println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
+    
     // 3. Code generation (LLVM IR)
     let context = Context::create();
     let mut codegen = LlvmCodeGen::new(&context, "hulk_module");

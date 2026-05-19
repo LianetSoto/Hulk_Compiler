@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::semantic::types::HulkType;
 
 pub struct PrettyPrinter {
     indent: usize,
@@ -16,6 +17,13 @@ impl PrettyPrinter {
         }
         self.output.push_str(line);
         self.output.push('\n');
+    }
+
+    fn type_str(ty: &Option<HulkType>) -> String {
+        match ty {
+            Some(t) => format!(" : {:?}", t),
+            None => String::new(),
+        }
     }
 
     pub fn into_string(self) -> String {
@@ -50,12 +58,16 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    fn visit_function_def(&mut self, func: &mut FunctionDef) { //ARREGLAR
+    fn visit_function_def(&mut self, func: &mut FunctionDef) {
         let params: Vec<String> = func.params.iter()
-            .map(|p| format!("{}: ?", p.name))
+            .map(|p| {
+                let ty_str = Self::type_str(&p.ty);
+                format!("{}{}", p.name, ty_str)
+            })
             .collect();
-        let params = params.join(", ");
-        self.write_line(&format!("FunctionDef {{ name: '{}', params: [{}]", func.name, params));
+        let params_str = params.join(", ");
+        let ret_str = Self::type_str(&func.ty);
+        self.write_line(&format!("FunctionDef {{ name: '{}', params: [{}]{}", func.name, params_str, ret_str));
         self.indent += 1;
         self.write_line("body:");
         self.indent += 1;
@@ -66,11 +78,13 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_number(&mut self, n: &mut NumberExpr) {
-        self.write_line(&format!("Number({})", n.value));
+        let ty_str = Self::type_str(&n.ty);
+        self.write_line(&format!("Number({}){}", n.value, ty_str));
     }
 
     fn visit_binary_op(&mut self, b: &mut BinaryOpExpr) {
-        self.write_line(&format!("BinaryOp {{ op: {:?}", b.op));
+        let ty_str = Self::type_str(&b.ty);
+        self.write_line(&format!("BinaryOp {{ op: {:?}{}", b.op, ty_str));
         self.indent += 1;
         self.write_line("left:");
         self.indent += 1;
@@ -84,20 +98,14 @@ impl Visitor for PrettyPrinter {
         self.write_line("}");
     }
 
-    // fn visit_print(&mut self, p: &mut PrintExpr) {
-    //     self.write_line("Print {");
-    //     self.indent += 1;
-    //     p.argument.accept(self);
-    //     self.indent -= 1;
-    //     self.write_line("}");
-    // }
-    
     fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
-        self.write_line(&format!("String({:?})", expr.value));
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("String({:?}){}", expr.value, ty_str));
     }
 
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
-        self.write_line(&format!("Call({}, args: [", expr.func));
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Call({}, args: [{}", expr.func, ty_str));
         self.indent += 1;
         for (i, arg) in expr.args.iter_mut().enumerate() {
             if i > 0 {
@@ -113,11 +121,13 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_const(&mut self, expr: &mut ConstExpr) -> Self::Result {
-        self.write_line(&format!("Const({})", expr.name));
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Const({}){}", expr.name, ty_str));
     }
 
     fn visit_bool(&mut self, expr: &mut BoolExpr) -> Self::Result {
-        self.write_line(&format!("Bool({})", expr.value));
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Bool({}){}", expr.value, ty_str));
     }
 
     fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
@@ -125,20 +135,23 @@ impl Visitor for PrettyPrinter {
             UnaryOp::Not => "!",
             UnaryOp::Neg => "-",
         };
-        self.write_line(&format!("UnaryOp({})", op_name));
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("UnaryOp({}){}", op_name, ty_str));
         self.indent += 1;
         expr.expr.accept(self);
         self.indent -= 1;
     }
 
     fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
-        self.write_line(&format!("Variable({})", expr.name));
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Variable({}){}", expr.name, ty_str));
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
-        self.write_line("Let {");
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Let {{{}", ty_str));
         self.indent += 1;
-        self.write_line(&format!("bindings: ["));
+        self.write_line("bindings: [");
         self.indent += 1;
         for (name, value) in &mut expr.bindings {
             self.write_line(&format!("{} =", name));
@@ -157,13 +170,8 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        self.write_line("Assign {");
-        self.indent += 1;
-        self.write_line("lhs:");
-        self.indent += 1;
-        expr.lhs.accept(self);
-        self.indent -= 1;
-        self.write_line("value:");
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Assign {{ {} := {}", expr.name, ty_str));
         self.indent += 1;
         expr.value.accept(self);
         self.indent -= 1;
@@ -172,7 +180,8 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
-        self.write_line("Block {");
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Block {{{}", ty_str));
         self.indent += 1;
         for e in &mut expr.expressions {
             e.accept(self);
@@ -182,7 +191,8 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
-        self.write_line("If {");
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("If {{{}", ty_str));
         self.indent += 1;
         self.write_line("condition:");
         self.indent += 1;
@@ -201,7 +211,8 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result {
-        self.write_line("While {");
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("While {{{}", ty_str));
         self.indent += 1;
         self.write_line("condition:");
         self.indent += 1;
@@ -214,150 +225,4 @@ impl Visitor for PrettyPrinter {
         self.indent -= 1;
         self.write_line("}");
     }
-
-      
-    fn visit_type_def(&mut self, ty: &mut TypeDef) {
-        let parent_str = match &ty.parent {
-            Some(parent) => format!(" inherits {}(...)", parent.name), // simplificado, luego mejoramos
-            None => String::new(),
-        };
-        self.write_line(&format!("TypeDef {{ name: '{}'{}", ty.name, parent_str));
-        self.indent += 1;
-        
-        // Atributos
-        if !ty.attributes.is_empty() {
-            self.write_line("attributes: [");
-            self.indent += 1;
-            for attr in &mut ty.attributes {
-                attr.accept(self);
-            }
-            self.indent -= 1;
-            self.write_line("]");
-        }
-        
-        // Métodos
-        if !ty.methods.is_empty() {
-            self.write_line("methods: [");
-            self.indent += 1;
-            for method in &mut ty.methods {
-                method.accept(self);
-            }
-            self.indent -= 1;
-            self.write_line("]");
-        }
-        
-        self.indent -= 1;
-        self.write_line("}");
-    }
-        
-    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
-        let type_ann = match &attr.ty_annotation {
-            Some(ty) => format!(": {:?}", ty),
-            None => String::new(),
-        };
-        self.write_line(&format!("Attribute {{ name: '{}{}', init:", attr.name, type_ann));
-        self.indent += 1;
-        attr.init_expr.accept(self);
-        self.indent -= 1;
-        self.write_line("}");
-    }
-    
-    fn visit_method(&mut self, m: &mut Method) -> Self::Result {
-        let params_str: Vec<String> = m.params.iter()
-            .map(|p| {
-                if let Some(ty) = &p.ty_annotation {
-                    format!("{}: {:?}", p.name, ty)
-                } else {
-                    p.name.clone()
-                }
-            })
-            .collect();
-        let ret_str = match &m.return_ty {
-            Some(ty) => format!(": {:?}", ty),
-            None => String::new(),
-        };
-        self.write_line(&format!("Method {{ name: '{}', params: [{}]{}", m.name, params_str.join(", "), ret_str));
-        self.indent += 1;
-        self.write_line("body:");
-        self.indent += 1;
-        m.body.accept(self);
-        self.indent -= 1;
-        self.indent -= 1;
-        self.write_line("}");
-    }
-    
-    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result {
-        self.write_line(&format!("New {{ type: '{}', args: [", e.type_name));
-        self.indent += 1;
-        for (i, arg) in e.args.iter_mut().enumerate() {
-            if i > 0 {
-                self.write_line(",");
-            }
-            arg.accept(self);
-        }
-        if !e.args.is_empty() {
-            self.write_line("");
-        }
-        self.indent -= 1;
-        self.write_line("] }");
-    }
-        
-    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result {
-        self.write_line("MethodCall {");
-        self.indent += 1;
-        self.write_line("object:");
-        self.indent += 1;
-        e.object.accept(self);
-        self.indent -= 1;
-        self.write_line(&format!("method: '{}', args: [", e.method));
-        self.indent += 1;
-        for (i, arg) in e.args.iter_mut().enumerate() {
-            if i > 0 {
-                self.write_line(",");
-            }
-            arg.accept(self);
-        }
-        if !e.args.is_empty() {
-            self.write_line("");
-        }
-        self.indent -= 1;
-        self.write_line("]");
-        self.indent -= 1;
-        self.write_line("}");
-    }
-    
-    fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result {
-        self.write_line("Self");
-    }
-
-    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
-        self.write_line("Base");
-    }
-    
-    fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result {
-        self.write_line("AttributeAccess {");
-        self.indent += 1;
-        self.write_line("object:");
-        self.indent += 1;
-        e.object.accept(self);
-        self.indent -= 1;
-        self.write_line(&format!("attribute: '{}'", e.attribute));
-        self.indent -= 1;
-        self.write_line("}");
-    }
-    // fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-    //     self.write_line(&format!("For {{ var: {}", expr.var));
-    //     self.indent += 1;
-    //     self.write_line("iterable:");
-    //     self.indent += 1;
-    //     expr.iterable.accept(self);
-    //     self.indent -= 1;
-    //     self.write_line("body:");
-    //     self.indent += 1;
-    //     expr.body.accept(self);
-    //     self.indent -= 1;
-    //     self.indent -= 1;
-    //     self.write_line("}");
-    // }
-
 }
