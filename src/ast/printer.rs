@@ -38,10 +38,17 @@ impl Visitor for PrettyPrinter {
         self.write_line("Program {");
         self.indent += 1;
 
+        // Print types
+        for ty in &mut program.types {
+            ty.accept(self);
+        }
+
+        // Print functions
         for func in &mut program.functions {
             func.accept(self);
         }
 
+        // Print main expression
         self.write_line("main_expr:");
         self.indent += 1;
         program.main_expr.accept(self);
@@ -167,6 +174,7 @@ impl Visitor for PrettyPrinter {
         self.write_line(&format!("Assign {{ {} := {}", expr.name, ty_str));
         self.indent += 1;
         expr.value.accept(self);
+        self.indent -= 1;
         self.indent -= 1;
         self.write_line("}");
     }

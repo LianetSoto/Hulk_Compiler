@@ -19,6 +19,11 @@ pub enum Expr {
     Block(BlockExpr),
     If(IfExpr),
     While(WhileExpr),
+    New(NewExpr),
+    MethodCall(MethodCallExpr),
+    SelfExpr(SelfExpr),
+    Base(BaseExpr),
+    AttributeAccess(AttributeAccessExpr),
     //For(ForExpr),
 }
 
@@ -39,6 +44,11 @@ impl Expr {
             Expr::Block(b) => b.span,
             Expr::If(i) => i.span,
             Expr::While(w) => w.span,
+            Expr::New(new_expr) => new_expr.span,
+            Expr::MethodCall(method_call_expr) => method_call_expr.span,
+            Expr::SelfExpr(self_expr) => self_expr.span,
+            Expr::Base(base_expr) => base_expr.span,
+            Expr::AttributeAccess(attr)=> attr.span,
             //Expr::For(f) => f.span,
         }
     }
@@ -59,6 +69,11 @@ impl Expr {
             Expr::Block(b) => b.ty.as_ref(),
             Expr::If(i) => i.ty.as_ref(),
             Expr::While(w) => w.ty.as_ref(),
+            Expr::New(new_expr) => new_expr.ty.as_ref(),
+            Expr::MethodCall(method_call_expr) => method_call_expr.ty.as_ref(),
+            Expr::SelfExpr(self_expr) => self_expr.ty.as_ref(),
+            Expr::Base(base_expr) => base_expr.ty.as_ref(),
+            Expr::AttributeAccess(attr) => attr.ty.as_ref(),
             //Expr::For(f) => f.ty.as_ref(),
         }
     }
@@ -80,6 +95,11 @@ impl Node for Expr {
             Expr::Block(b) => b.accept(visitor),
             Expr::If(i) => i.accept(visitor),
             Expr::While(w) => w.accept(visitor),
+            Expr::New(new_expr) => new_expr.accept(visitor),
+            Expr::MethodCall(method_call_expr) => method_call_expr.accept(visitor),
+            Expr::SelfExpr(self_expr) => self_expr.accept(visitor),
+            Expr::Base(base_expr) => base_expr.accept(visitor),
+            Expr::AttributeAccess(attr) => attr.accept(visitor),
         }
     }
 }
@@ -221,7 +241,7 @@ impl Node for LetExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DestructiveAssignExpr {
-    pub name: String,
+    pub lhs: Box<Expr>,
     pub value: Box<Expr>,
     pub span: Span,
     pub ty: Option<HulkType>,
@@ -275,3 +295,69 @@ impl Node for WhileExpr {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewExpr {
+    pub type_name: String,
+    pub args: Vec<Box<Expr>>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for NewExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_new(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodCallExpr {
+    pub object: Box<Expr>,
+    pub method: String,
+    pub args: Vec<Box<Expr>>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for MethodCallExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_method_call(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfExpr {
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for SelfExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_self(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BaseExpr {
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for BaseExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_base(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttributeAccessExpr {
+    pub object: Box<Expr>,
+    pub attribute: String,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for AttributeAccessExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_attribute_access(self)
+    }
+}

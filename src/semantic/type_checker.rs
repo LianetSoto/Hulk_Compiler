@@ -71,6 +71,15 @@ impl TypeChecker {
         }
     }
 
+    fn is_assignable(&mut self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(_) => true,          // asignación a variable local
+            Expr::AttributeAccess(attr) => true, // asignación a atributo (self.x, obj.y)
+            // Puedes extender a accesos a vectores, etc.
+            _ => false,
+        }
+    }
+
     fn add_type_error(&mut self, msg: String, span: Span) {
         self.errors.push(CompilerError::TypeError { msg, span });
     }

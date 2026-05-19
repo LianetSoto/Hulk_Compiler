@@ -4,6 +4,7 @@ pub enum HulkType {
     String,
     Boolean,
     Object,
+    UserDefined(String), 
     Error,
     Var(usize),
 }
