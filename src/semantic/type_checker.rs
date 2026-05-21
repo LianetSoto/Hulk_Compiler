@@ -507,4 +507,36 @@ impl Visitor for TypeChecker {
         self.exit_scope();
         resolved_ret
     }
+    
+    fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_method(&mut self, m: &mut Method) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result {
+        todo!()
+    }
 }

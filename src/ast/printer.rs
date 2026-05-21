@@ -170,8 +170,13 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        let ty_str = Self::type_str(&expr.ty);
-        self.write_line(&format!("Assign {{ {} := {}", expr.name, ty_str));
+        self.write_line("Assign {");
+        self.indent += 1;
+        self.write_line("lhs:");
+        self.indent += 1;
+        expr.lhs.accept(self);
+        self.indent -= 1;
+        self.write_line("value:");
         self.indent += 1;
         expr.value.accept(self);
         self.indent -= 1;
@@ -222,6 +227,136 @@ impl Visitor for PrettyPrinter {
         self.indent += 1;
         expr.body.accept(self);
         self.indent -= 1;
+        self.indent -= 1;
+        self.write_line("}");
+    }
+    
+    fn visit_type_def(&mut self, ty: &mut TypeDef) {
+        let parent_str = match &ty.parent {
+            Some(parent) => format!(" inherits {}(...)", parent.name), // simplificado, luego mejoramos
+            None => String::new(),
+        };
+        self.write_line(&format!("TypeDef {{ name: '{}'{}", ty.name, parent_str));
+        self.indent += 1;
+        
+        // Attributes
+        if !ty.attributes.is_empty() {
+            self.write_line("attributes: [");
+            self.indent += 1;
+            for attr in &mut ty.attributes {
+                attr.accept(self);
+            }
+            self.indent -= 1;
+            self.write_line("]");
+        }
+
+        // Methods
+        if !ty.methods.is_empty() {
+            self.write_line("methods: [");
+            self.indent += 1;
+            for method in &mut ty.methods {
+                method.accept(self);
+            }
+            self.indent -= 1;
+            self.write_line("]");
+        }
+        
+        self.indent -= 1;
+        self.write_line("}");
+    }
+    
+    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
+        let type_ann = match &attr.ty_annotation {
+            Some(ty) => format!(": {:?}", ty),
+            None => String::new(),
+        };
+        self.write_line(&format!("Attribute {{ name: '{}{}', init:", attr.name, type_ann));
+        self.indent += 1;
+        attr.init_expr.accept(self);
+        self.indent -= 1;
+        self.write_line("}");
+    }
+    
+    fn visit_method(&mut self, m: &mut Method) -> Self::Result {
+        let params_str: Vec<String> = m.params.iter()
+            .map(|p| {
+                if let Some(ty) = &p.ty_annotation {
+                    format!("{}: {:?}", p.name, ty)
+                } else {
+                    p.name.clone()
+                }
+            })
+            .collect();
+        let ret_str = match &m.return_ty {
+            Some(ty) => format!(": {:?}", ty),
+            None => String::new(),
+        };
+        self.write_line(&format!("Method {{ name: '{}', params: [{}]{}", m.name, params_str.join(", "), ret_str));
+        self.indent += 1;
+        self.write_line("body:");
+        self.indent += 1;
+        m.body.accept(self);
+        self.indent -= 1;
+        self.indent -= 1;
+        self.write_line("}");
+    }
+    
+    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result {
+        self.write_line(&format!("New {{ type: '{}', args: [", e.type_name));
+        self.indent += 1;
+        for (i, arg) in e.args.iter_mut().enumerate() {
+            if i > 0 {
+                self.write_line(",");
+            }
+            arg.accept(self);
+        }
+        if !e.args.is_empty() {
+            self.write_line("");
+        }
+        self.indent -= 1;
+        self.write_line("] }");
+    }
+    
+    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result {
+        self.write_line("MethodCall {");
+        self.indent += 1;
+        self.write_line("object:");
+        self.indent += 1;
+        e.object.accept(self);
+        self.indent -= 1;
+        self.write_line(&format!("method: '{}', args: [", e.method));
+        self.indent += 1;
+        for (i, arg) in e.args.iter_mut().enumerate() {
+            if i > 0 {
+                self.write_line(",");
+            }
+            arg.accept(self);
+        }
+        if !e.args.is_empty() {
+            self.write_line("");
+        }
+        self.indent -= 1;
+        self.write_line("]");
+        self.indent -= 1;
+        self.write_line("}");
+    }
+    
+    fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result {
+        self.write_line("Self");
+    }
+
+    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
+        self.write_line("Base");
+    }
+    
+    fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result {
+        self.write_line("AttributeAccess {");
+        self.indent += 1;
+        self.write_line("object:");
+        self.indent += 1;
+        e.object.accept(self);
+        self.indent -= 1;
+        self.write_line(&format!("attribute: '{}'", e.attribute));
         self.indent -= 1;
         self.write_line("}");
     }
