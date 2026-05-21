@@ -732,10 +732,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(phi.as_basic_value().into())
     }   
     
-    fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
-        todo!()
-    }
-    
     fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result {
         todo!()
     }
