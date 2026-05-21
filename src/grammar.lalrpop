@@ -88,22 +88,24 @@ Type: HulkType = {
 
 // Attribute: name [: Type] = expr ;
 Attribute: Attribute = {
-    <start:@L> <name:"identifier"> <ty:(":" <Type>)?> "=" <init:Expr> ";" <end:@R> => {
+    <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> "=" <init:Expr> ";" <end:@R> => {
         Attribute {
             name,
-            ty_annotation: ty,
             init_expr: init,
             span: Span::new(start, end),
+            ty: None,
+            ty_annotation: ty_ann,
         }
     }
 };
 
 MethodParam: MethodParam = {
-    <start:@L> <name:"identifier"> <ty:(":" <Type>)?> <end:@R> => {
+    <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
         MethodParam {
             name,
-            ty_annotation: ty,
             span: Span::new(start, end),
+            ty: None,
+            ty_annotation: ty_ann,
         }
     }
 };
@@ -114,25 +116,25 @@ MethodParams: Vec<MethodParam> = {
 
 Method: Method = {
     // Simple body (with =>)
-    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ty:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
+    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
         Method {
             name,
             params,
-            return_ty: ret_ty,
             body,
             span: Span::new(start, end),
             ty: None,
+            ty_annotation: ret_ann,  
         }
     },
     // Block body (without =>)
-    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ty:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
+    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
         Method {
             name,
             params,
-            return_ty: ret_ty,
             body,
             span: Span::new(start, end),
             ty: None,
+            ty_annotation: ret_ann,
         }
     },
 };
@@ -160,10 +162,11 @@ ParentSpec: Parent = {
         Parent {
             name: match name {
                 HulkType::UserDefined(s) => s,
-                _ => panic!("Parent type must be user-defined"), // o maneja error
+                _ => panic!("Parent type must be user-defined"),
             },
             args: args.unwrap_or_default(),
             span: Span::new(start, end),
+            ty: None,
         }
     }
 };
