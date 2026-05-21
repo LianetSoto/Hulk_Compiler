@@ -21,9 +21,10 @@ impl Node for TypeDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
     pub name: String,
-    pub ty_annotation: Option<HulkType>,
     pub init_expr: Box<Expr>,
     pub span: Span,
+    pub ty: Option<HulkType>,
+    pub ty_annotation: Option<HulkType>,
 }
 
 impl Node for Attribute {
@@ -36,10 +37,10 @@ impl Node for Attribute {
 pub struct Method {
     pub name: String,
     pub params: Vec<MethodParam>,
-    pub return_ty: Option<HulkType>,
     pub body: Box<Expr>,
     pub span: Span,
-    pub ty: Option<HulkType>, // tipo de retorno inferido
+    pub ty: Option<HulkType>,
+    pub ty_annotation: Option<HulkType>,
 }
 
 impl Node for Method {
@@ -51,8 +52,9 @@ impl Node for Method {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodParam {
     pub name: String,
-    pub ty_annotation: Option<HulkType>,
     pub span: Span,
+    pub ty: Option<HulkType>,
+    pub ty_annotation: Option<HulkType>,
 }
 
 pub enum TypeMember {
@@ -65,4 +67,5 @@ pub struct Parent {
     pub name: String,
     pub args: Vec<Box<Expr>>,
     pub span: Span,
+    pub ty: Option<HulkType>,
 }

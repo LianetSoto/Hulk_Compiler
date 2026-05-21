@@ -26,6 +26,13 @@ impl PrettyPrinter {
         }
     }
 
+    fn type_opt(ty: &Option<HulkType>) -> String {
+        match ty {
+            Some(t) => format!("{:?}", t),
+            None => "?".to_string(),
+        }
+    }
+
     pub fn into_string(self) -> String {
         self.output
     }
@@ -233,7 +240,7 @@ impl Visitor for PrettyPrinter {
     
     fn visit_type_def(&mut self, ty: &mut TypeDef) {
         let parent_str = match &ty.parent {
-            Some(parent) => format!(" inherits {}(...)", parent.name), // simplificado, luego mejoramos
+            Some(parent) => format!(" inherits {}(...)", parent.name),
             None => String::new(),
         };
         self.write_line(&format!("TypeDef {{ name: '{}'{}", ty.name, parent_str));
@@ -266,11 +273,15 @@ impl Visitor for PrettyPrinter {
     }
     
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
-        let type_ann = match &attr.ty_annotation {
+        let ann_str = match &attr.ty_annotation {
             Some(ty) => format!(": {:?}", ty),
             None => String::new(),
         };
-        self.write_line(&format!("Attribute {{ name: '{}{}', init:", attr.name, type_ann));
+        let inf_str = match &attr.ty {
+            Some(ty) => format!(" [infer: {:?}]", ty),
+            None => String::new(),
+        };
+        self.write_line(&format!("Attribute {{ name: '{}{}{}', init:", attr.name, ann_str, inf_str));
         self.indent += 1;
         attr.init_expr.accept(self);
         self.indent -= 1;
@@ -280,18 +291,27 @@ impl Visitor for PrettyPrinter {
     fn visit_method(&mut self, m: &mut Method) -> Self::Result {
         let params_str: Vec<String> = m.params.iter()
             .map(|p| {
-                if let Some(ty) = &p.ty_annotation {
-                    format!("{}: {:?}", p.name, ty)
-                } else {
-                    p.name.clone()
-                }
+                let ann = match &p.ty_annotation {
+                    Some(ty) => format!(": {:?}", ty),
+                    None => String::new(),
+                };
+                let inf = match &p.ty {
+                    Some(ty) => format!(" [infer: {:?}]", ty),
+                    None => String::new(),
+                };
+                format!("{}{}{}", p.name, ann, inf)
             })
             .collect();
-        let ret_str = match &m.return_ty {
-            Some(ty) => format!(": {:?}", ty),
+        let ret_ann = match &m.ty_annotation {
+            Some(ty) => format!(" -> {:?}", ty),
             None => String::new(),
         };
-        self.write_line(&format!("Method {{ name: '{}', params: [{}]{}", m.name, params_str.join(", "), ret_str));
+        let ret_inf = match &m.ty {
+            Some(ty) => format!(" [infer: {:?}]", ty),
+            None => String::new(),
+        };
+        self.write_line(&format!("Method {{ name: '{}', params: [{}]{}{}", 
+            m.name, params_str.join(", "), ret_ann, ret_inf));
         self.indent += 1;
         self.write_line("body:");
         self.indent += 1;
