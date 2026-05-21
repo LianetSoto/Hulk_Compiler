@@ -408,21 +408,31 @@ impl Visitor for TypeChecker {
         body_ty
     }
 
-    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        let var_ty = match self.lookup_var(&expr.name) {
-            Some(ty) => ty,
-            None => {
-                self.add_type_error(format!("Undefined variable '{}'", expr.name), expr.span);
-                HulkType::Error
-            }
-        };
-        let value_ty = expr.value.accept(self);
-        if let Err(msg) = self.unifier.unify(&value_ty, &var_ty) {
-            self.add_type_error(msg, expr.span);
+    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> HulkType {
+        // Evaluate the type of the left-hand side (lhs)
+        let lhs_ty = expr.lhs.accept(self);
+        
+        // Check that the lhs is assignable (e.g., variable or attribute access)
+        if !self.is_assignable(&expr.lhs) {
+            self.add_type_error(
+                format!("Left-hand side of assignment is not assignable"),
+                expr.span
+            );
+            expr.ty = Some(HulkType::Error);
+            return HulkType::Error;
         }
-        let final_ty = self.unifier.resolve(&value_ty);
-        expr.ty = Some(final_ty.clone());
-        final_ty
+        
+        // Evaluate the type of the assigned value
+        let value_ty = expr.value.accept(self);
+        // Verify type compatibility
+        if lhs_ty != HulkType::Error && !value_ty.is_compatible_with(&lhs_ty) {
+            self.add_type_error(
+                format!("Cannot assign {:?} to expression of type {:?}", value_ty, lhs_ty),
+                expr.span
+            );
+        }
+        expr.ty = Some(value_ty.clone());
+        value_ty
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
