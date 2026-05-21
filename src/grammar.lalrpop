@@ -378,7 +378,7 @@ ForExpr: Box<Expr> = {
 
         // Increment: var := var + 1
         let inc = Box::new(Expr::DestructiveAssign(DestructiveAssignExpr {
-            name: var.clone(),
+            lhs: Box::new(Expr::Variable(VariableExpr { name: var.clone(), span, ty: None })),
             value: Box::new(Expr::BinaryOp(BinaryOpExpr {
                 left: Box::new(Expr::Variable(VariableExpr { name: var.clone(), span, ty: None })),
                 op: BinOp::Add,
@@ -622,11 +622,6 @@ AtomicExpr: Box<Expr> = {
         span: Span::new(start, end),
         ty: None,
     })),
-    //<start:@L> "print" "(" <e:Expr> ")" <end:@R> => Box::new(Expr::Print(PrintExpr {
-    //    argument: e,
-    //    span: Span::new(start, end),
-    //    ty: None,
-    //})),
 
     // Generic function call (includes sin, cos, range, etc.)
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {

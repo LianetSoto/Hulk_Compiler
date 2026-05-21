@@ -2,12 +2,11 @@ use crate::ast::{Node, Visitor};
 use crate::error::Span;
 use crate::semantic::types::HulkType;
 
-// ENUM PRINCIPAL DE EXPRESIONES
+// MAIN EXPRESSIONS ENUM
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(NumberExpr),
     BinaryOp(BinaryOpExpr),
-    // Print(PrintExpr),
     String(StringExpr),
     Call(CallExpr),
     Const(ConstExpr),
@@ -24,7 +23,6 @@ pub enum Expr {
     SelfExpr(SelfExpr),
     Base(BaseExpr),
     AttributeAccess(AttributeAccessExpr),
-    //For(ForExpr),
 }
 
 impl Expr {
@@ -49,7 +47,6 @@ impl Expr {
             Expr::SelfExpr(self_expr) => self_expr.span,
             Expr::Base(base_expr) => base_expr.span,
             Expr::AttributeAccess(attr)=> attr.span,
-            //Expr::For(f) => f.span,
         }
     }
 
@@ -57,7 +54,6 @@ impl Expr {
         match self {
             Expr::Number(n) => n.ty.as_ref(),
             Expr::BinaryOp(b) => b.ty.as_ref(),
-            // Expr::Print(p) => p.ty.as_ref(),
             Expr::String(s) => s.ty.as_ref(),
             Expr::Call(c) => c.ty.as_ref(),
             Expr::Const(c) => c.ty.as_ref(),
@@ -74,7 +70,6 @@ impl Expr {
             Expr::SelfExpr(self_expr) => self_expr.ty.as_ref(),
             Expr::Base(base_expr) => base_expr.ty.as_ref(),
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
-            //Expr::For(f) => f.ty.as_ref(),
         }
     }
 }
@@ -270,7 +265,7 @@ impl Node for BlockExpr {
 pub struct IfExpr {
     pub condition: Box<Expr>,
     pub then_branch: Box<Expr>,
-    pub else_branch: Box<Expr>,   // now mandatory, always present
+    pub else_branch: Box<Expr>, 
     pub span: Span,
     pub ty: Option<HulkType>,
 }
