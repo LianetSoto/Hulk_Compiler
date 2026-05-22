@@ -5,6 +5,7 @@ use crate::semantic::types::HulkType;
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDef {
     pub name: String,
+    pub params: Vec<String>, 
     pub parent: Option<Parent>,
     pub attributes: Vec<Attribute>,
     pub methods: Vec<Method>,

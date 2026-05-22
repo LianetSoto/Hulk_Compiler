@@ -218,9 +218,11 @@ TypeParams: Vec<String> = {
 };
 
 TypeDef: TypeDef = {
-    <start:@L> "type" <name:"identifier"> <params:("(" <TypeParams> ")")?>
+    <start:@L> "type" <name:"identifier">
+    <params:("(" <TypeParams> ")")?>
     <parent:ParentSpec?>
     "{" <members:TypeMembers> "}" <end:@R> => {
+        println!("TypeDef {} params: {:?}", name, params);
         let mut attrs = vec![];
         let mut meths = vec![];
         for m in members {
@@ -231,6 +233,7 @@ TypeDef: TypeDef = {
         }
         TypeDef {
             name,
+            params: params.unwrap_or_default(),   // ← clave
             parent,
             attributes: attrs,
             methods: meths,
