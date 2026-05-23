@@ -120,6 +120,7 @@ Method: Method = {
         Method {
             name,
             params,
+            type_name: None,
             body,
             span: Span::new(start, end),
             ty: None,
@@ -131,6 +132,7 @@ Method: Method = {
         Method {
             name,
             params,
+            type_name: None,
             body,
             span: Span::new(start, end),
             ty: None,

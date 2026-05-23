@@ -37,6 +37,7 @@ impl Node for Attribute {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Method {
     pub name: String,
+    pub type_name: Option<String>,
     pub params: Vec<MethodParam>,
     pub body: Box<Expr>,
     pub span: Span,

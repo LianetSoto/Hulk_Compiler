@@ -289,6 +289,10 @@ impl Visitor for PrettyPrinter {
     }
     
     fn visit_method(&mut self, m: &mut Method) -> Self::Result {
+        let type_info = match &m.type_name {
+            Some(t) => format!(" (in type '{}')", t),
+            None => String::new(),
+        };
         let params_str: Vec<String> = m.params.iter()
             .map(|p| {
                 let ann = match &p.ty_annotation {
@@ -310,8 +314,8 @@ impl Visitor for PrettyPrinter {
             Some(ty) => format!(" [infer: {:?}]", ty),
             None => String::new(),
         };
-        self.write_line(&format!("Method {{ name: '{}', params: [{}]{}{}", 
-            m.name, params_str.join(", "), ret_ann, ret_inf));
+        self.write_line(&format!("Method {{ name: '{}'{}, params: [{}]{}{}", 
+            m.name, type_info, params_str.join(", "), ret_ann, ret_inf));
         self.indent += 1;
         self.write_line("body:");
         self.indent += 1;

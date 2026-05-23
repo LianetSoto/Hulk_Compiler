@@ -629,6 +629,12 @@ impl Visitor for TypeChecker {
 
         self.exit_scope();  // salir del ámbito de parámetros
 
+            // Asignar el nombre del tipo a cada método
+        for method in &mut type_def.methods {
+            method.type_name = Some(type_def.name.clone());
+        }
+
+
         // Procesar métodos
         for method in &mut type_def.methods {
             method.accept(self);
