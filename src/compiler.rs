@@ -90,11 +90,11 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
     };
 
     // ---- AST PRINTING (IF REQUESTED) ----
-    if print_ast {
+    // if print_ast {
         let mut printer = PrettyPrinter::new();
         ast.accept(&mut printer);
         println!("=== Abstract Syntax Tree ===\n{}", printer.into_string());
-    }
+    //}
 
     // 2. Semantic analysis (type checking)
     let mut type_checker = TypeChecker::new();
@@ -104,6 +104,8 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         }
         process::exit(1);
     }
+
+    type_checker.resolve_ast(&mut ast);
 
         
     let mut printer = PrettyPrinter::new();

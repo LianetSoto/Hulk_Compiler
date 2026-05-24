@@ -197,6 +197,7 @@ FunctionDef: FunctionDef = {
             body,
             span: Span::new(start, end),
             ty: ret_ty,
+            is_generic: false,
         }
     },
     <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ty:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
@@ -206,6 +207,7 @@ FunctionDef: FunctionDef = {
             body,
             span: Span::new(start, end),
             ty: ret_ty,
+            is_generic: false,
         }
     },
 };
