@@ -74,7 +74,9 @@ impl Visitor for PrettyPrinter {
             .collect();
         let params_str = params.join(", ");
         let ret_str = Self::type_str(&func.ty);
-        self.write_line(&format!("FunctionDef {{ name: '{}', params: [{}]{}", func.name, params_str, ret_str));
+        // Línea única con generic
+        self.write_line(&format!("FunctionDef {{ name: '{}', generic: {}, params: [{}]{}", 
+            func.name, func.is_generic, params_str, ret_str));
         self.indent += 1;
         self.write_line("body:");
         self.indent += 1;

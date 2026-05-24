@@ -16,6 +16,7 @@ pub struct FunctionDef {
     pub body: Box<Expr>,  // The body is always an expression (simple or block)
     pub span: Span,
     pub ty: Option<HulkType>,  // Return type
+    pub is_generic: bool,
 }
 
 impl Node for FunctionDef {
