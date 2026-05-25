@@ -49,8 +49,8 @@ impl Unifier {
     pub fn resolve(&self, ty: &HulkType) -> HulkType {
         let applied = self.apply(ty);
         match applied {
-            HulkType::Var(id) if !self.subs.contains_key(&id) => HulkType::Object,
+            HulkType::Var(id) if !self.subs.contains_key(&id) => applied,
             other => other,
         }
-    }
+}
 }
