@@ -533,24 +533,42 @@ impl Visitor for TypeChecker {
                         );
                         return HulkType::Error;
                     }
-                    // Si la función es genérica, crear NUEVAS variables de tipo para esta instancia
+                    // Si la función es genérica, instanciar variables de tipo frescas
                     let (param_types, ret_ty) = if func_info.is_generic {
-                        // Crear nuevas variables de tipo para esta instancia
-                        let new_params: Vec<HulkType> = (0..func_info.params_len)
-                            .map(|_| self.unifier.new_var())
-                            .collect();
-                        let new_ret = self.unifier.new_var();
+                        let mut var_map = HashMap::new();
                         
-                        // Obtener las relaciones de unificación de la inferencia anterior
+                        // Función auxiliar para instanciar (clonar) variables genéricas 
+                        // sin alterar las originales de la definición
+                        let mut instantiate = |ty: &HulkType, unifier: &mut Unifier, map: &mut HashMap<usize, HulkType>| -> HulkType {
+                            let applied = unifier.apply(ty);
+                            if let HulkType::Var(id) = applied {
+                                if let Some(new_ty) = map.get(&id) {
+                                    new_ty.clone()
+                                } else {
+                                    let new_var = unifier.new_var();
+                                    map.insert(id, new_var.clone());
+                                    new_var
+                                }
+                            } else {
+                                applied
+                            }
+                        };
+
                         if let Some(orig_ret_var) = self.return_var.get(&expr.func) {
                             if let Some(orig_params) = self.param_vars.get(&expr.func) {
-                                for (new_p, orig_p) in new_params.iter().zip(orig_params.iter()) {
-                                    let _ = self.unifier.unify(new_p, orig_p);
-                                }
-                                let _ = self.unifier.unify(&new_ret, orig_ret_var);
+                                let new_params: Vec<HulkType> = orig_params.iter()
+                                    .map(|p| instantiate(p, &mut self.unifier, &mut var_map))
+                                    .collect();
+                                
+                                let new_ret = instantiate(orig_ret_var, &mut self.unifier, &mut var_map);
+                                
+                                (new_params, new_ret)
+                            } else {
+                                (vec![], HulkType::Error)
                             }
+                        } else {
+                            (vec![], HulkType::Error)
                         }
-                        (new_params, new_ret)
                     } else {
                         // Para funciones no-genéricas, usar directamente los tipos
                         let param_types = match func_info.param_types {
@@ -563,7 +581,7 @@ impl Visitor for TypeChecker {
                         let ret = func_info.return_type.unwrap_or(HulkType::Object);
                         (param_types, ret)
                     };
-                    
+                                        
                     for (i, (arg, expected)) in expr.args.iter_mut().zip(param_types.iter()).enumerate() {
                         let arg_ty = arg.accept(self);
                         if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
@@ -744,7 +762,13 @@ impl Visitor for TypeChecker {
 
         // Determinar si es genérica basándose en si los parámetros resultan ser Object cuando se resuelvan
         // pero por ahora, una función es genérica si tiene variables de tipo sin vincular
-        let is_generic = param_vars.iter().any(|t| matches!(t, HulkType::Var(_)));
+        // Determinar si es genérica basándose en si los parámetros resultan ser variables 
+        // de tipo sin vincular después de inferir el cuerpo.
+        let is_generic = param_vars.iter().any(|t| {
+            matches!(self.unifier.apply(t), HulkType::Var(_))
+        });
+
+        func.is_generic = is_generic;
 
         if let Some(info) = self.functions.get_mut(&func.name) {
             // Guardar las variables de tipo sin resolver
