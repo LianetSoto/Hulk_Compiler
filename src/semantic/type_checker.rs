@@ -590,9 +590,9 @@ impl Visitor for TypeChecker {
                     }
                     
                     // Resolver el tipo de retorno después de la unificación
-                    let resolved_ret_ty = self.unifier.resolve(&ret_ty);
-                    expr.ty = Some(resolved_ret_ty.clone());
-                    resolved_ret_ty
+                    let applied_ret_ty = self.unifier.apply(&ret_ty);
+                    expr.ty = Some(applied_ret_ty.clone());
+                    applied_ret_ty
                 } else {
                     self.add_type_error(format!("Unknown function '{}'", expr.func), expr.span);
                     HulkType::Error
@@ -1042,10 +1042,10 @@ impl Visitor for TypeChecker {
         
         let ret_ty = method_info.return_type.clone();
         // Resolver el tipo de retorno después de la unificación
-        let resolved_ret_ty = self.unifier.resolve(&ret_ty);
-        expr.ty = Some(resolved_ret_ty.clone());
+        let applied_ret_ty = self.unifier.apply(&ret_ty);
+        expr.ty = Some(applied_ret_ty.clone());
         
-        resolved_ret_ty
+        applied_ret_ty
     }
 
     fn visit_self(&mut self, expr: &mut SelfExpr) -> Self::Result {
