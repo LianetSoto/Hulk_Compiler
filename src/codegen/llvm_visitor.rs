@@ -703,8 +703,15 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(phi.as_basic_value().into())
     }   
 
-    fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result {
-        todo!()
+    // Types
+
+    fn visit_type_def(&mut self, type_def: &mut TypeDef) -> Self::Result {
+
+        let struct_ty = self.build_struct_type(type_def)?;
+
+        self.type_structs.insert(type_def.name.clone(), struct_ty);
+
+        Ok(self.context.f64_type().const_float(0.0).into())
     }
 
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
