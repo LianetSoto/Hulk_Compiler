@@ -4,8 +4,9 @@ use inkwell::builder::Builder;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use std::collections::HashMap;
 use crate::semantic::HulkType;
-use crate::ast::{Program, Node};
+use crate::ast::{Program, Node, Expr};
 use crate::error::{CompilerError};
+use inkwell::types::{StructType, BasicTypeEnum};
 
 pub struct LlvmCodeGen<'ctx> {
     pub(crate) context: &'ctx Context, 
@@ -13,7 +14,8 @@ pub struct LlvmCodeGen<'ctx> {
     pub(crate) builder: Builder<'ctx>,
     pub(crate) scopes: Vec<HashMap<String, PointerValue<'ctx>>>,
     pub(crate) current_function: Option<FunctionValue<'ctx>>,
-    pub(crate) user_functions: HashMap<String, FunctionValue<'ctx>>,
+    pub(crate) user_functions: HashMap<String, FunctionValue<'ctx>>, 
+    pub(crate) type_structs: HashMap<String, StructType<'ctx>>,
 }
 
 impl<'ctx> LlvmCodeGen<'ctx> {
@@ -30,6 +32,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             scopes: vec![HashMap::new()],
             current_function: None,
             user_functions: HashMap::new(),
+            type_structs: HashMap::new(),
         }
     }
 
@@ -70,29 +73,74 @@ impl<'ctx> LlvmCodeGen<'ctx> {
     // Type helpers (HULK type → LLVM type / default value)
 
     /// Convert a HULK type to the corresponding LLVM type.
-    pub(crate) fn hulk_type_to_llvm_type(&self, ty: &HulkType) -> inkwell::types::BasicTypeEnum<'ctx> {
+    pub(crate) fn hulk_type_to_llvm_type(&self, ty: &HulkType) -> Result<BasicTypeEnum<'ctx>, CompilerError> {
         match ty {
-            HulkType::Number => self.context.f64_type().into(),
-            HulkType::String => self.context.i8_type()
-                .ptr_type(inkwell::AddressSpace::default()).into(),
-            HulkType::Boolean => self.context.bool_type().into(),
-            _ => self.context.f64_type().into(), // fallback for unknown types
+            HulkType::Number => Ok(self.context.f64_type().into()),
+            HulkType::Boolean => Ok(self.context.bool_type().into()),
+            HulkType::String => Ok(self.context.i8_type()
+                .ptr_type(inkwell::AddressSpace::default())
+                .into()),
+            HulkType::Class(name) => {
+                if let Some(st) = self.type_structs.get(name) {
+                    Ok(st.ptr_type(inkwell::AddressSpace::default()).into())
+                } else {
+                    // Fallback to opaque pointer if struct not found (could be an error too)
+                    Ok(self.context.i8_type()
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .into())
+                }
+            }
+            _ => Err(CompilerError::CodegenError {
+                msg: format!("unexpected type in code generation: {:?}", ty),
+                span: None, // you could pass a span if available
+            }),
         }
     }
 
     /// Return a sensible default LLVM value for a given HULK type.
-    pub(crate) fn default_value_for_type(&self, ty: &HulkType) -> BasicValueEnum<'ctx> {
+    pub(crate) fn default_value_for_type(&self, ty: &HulkType) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         match ty {
-            HulkType::Number => self.context.f64_type().const_float(0.0).into(),
-            HulkType::String => {
+            HulkType::Number => Ok(self.context.f64_type().const_float(0.0).into()),
+            HulkType::Boolean => Ok(self.context.bool_type().const_int(0, false).into()),
+            HulkType::String | HulkType::Class(_)=> {
                 let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                i8_ptr.const_null().into()
+                Ok(i8_ptr.const_null().into())
             }
-            HulkType::Boolean => self.context.bool_type().const_int(0, false).into(),
-            _ => self.context.f64_type().const_float(0.0).into(), // fallback
+            _ => Err(CompilerError::CodegenError {
+                msg: format!("unexpected type in default_value_for_type: {:?}", ty),
+                span: None,
+            }),
         }
     }
 
+    /// Evaluates an expression that is expected to be assignable (an lvalue)
+    /// and returns a pointer to the memory location where a value can be stored.
+    pub(crate) fn eval_lvalue(&mut self, expr: &mut Expr) -> Result<PointerValue<'ctx>, CompilerError> {
+        match expr {
+            // --- Simple variable ---
+            Expr::Variable(var) => {
+                match self.lookup_var(&var.name) {
+                    Some(ptr) => Ok(ptr),
+                    None => Err(CompilerError::CodegenError {
+                        msg: format!("undefined variable '{}'", var.name),
+                        span: Some(var.span),
+                    }),
+                }
+            }
+
+            // --- Attribute access (e.g. self.x, obj.field) ---
+            Expr::AttributeAccess(attr) => {
+                todo!()
+            }
+
+            // --- Anything else is not assignable (should be caught by TypeChecker) ---
+            _ => Err(CompilerError::CodegenError {
+                msg: "left-hand side of assignment is not assignable".to_string(),
+                span: Some(expr.span()),
+            }),
+        }
+    }
+    
     // Random generator seeding
 
     /// Seeds the C random number generator with the current time so that
