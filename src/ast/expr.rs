@@ -72,6 +72,29 @@ impl Expr {
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
         }
     }
+
+    pub fn ty_mut(&mut self) -> &mut Option<HulkType> {
+        match self {
+            Expr::Number(e) => &mut e.ty,
+            Expr::BinaryOp(e) => &mut e.ty,
+            Expr::String(e) => &mut e.ty,
+            Expr::Call(e) => &mut e.ty,
+            Expr::Const(e) => &mut e.ty,
+            Expr::Bool(e) => &mut e.ty,
+            Expr::UnaryOp(e) => &mut e.ty,
+            Expr::Variable(e) => &mut e.ty,
+            Expr::Let(e) => &mut e.ty,
+            Expr::DestructiveAssign(e) => &mut e.ty,
+            Expr::Block(e) => &mut e.ty,
+            Expr::If(e) => &mut e.ty,
+            Expr::While(e) => &mut e.ty,
+            Expr::New(e) => &mut e.ty,
+            Expr::MethodCall(e) => &mut e.ty,
+            Expr::SelfExpr(e) => &mut e.ty,
+            Expr::Base(e) => &mut e.ty,
+            Expr::AttributeAccess(e) => &mut e.ty,
+        }
+    }
 }
 
 impl Node for Expr {
