@@ -3,16 +3,16 @@ use crate::ast::*;
 use crate::error::CompilerError;
 use inkwell::values::BasicValueEnum;
 use crate::semantic::HulkType;
-use std::collections::HashMap;
+use inkwell::types::{BasicTypeEnum};
 
 impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     type Result = Result<BasicValueEnum<'ctx>, CompilerError>;
 
     /// Generates LLVM IR for the entire HULK program.
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-
+   
         // Declare every function (built‑ins and user‑defined) in the module.
-        let user_map = self.declare_all_functions(&program.functions);
+        let user_map = self.declare_all_functions(&program.functions)?;
         self.user_functions = user_map;
 
         // Compile each user function body.
@@ -47,43 +47,17 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         // Retrieve the LLVM function value that was registered in the first pass.
         let function = self.user_functions[&func.name];
 
-        let entry = self.context.append_basic_block(function, "entry");
-        self.builder.position_at_end(entry);
+        let params: Vec<(String, BasicTypeEnum<'ctx>)> = func.params.iter()
+        .map(|p| {
+            let hulk_ty = p.ty.as_ref().unwrap();
+            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?; 
+            Ok((p.name.clone(), llvm_ty))
+        })
+        .collect::<Result<_, CompilerError>>()?;
 
-        // Remember the current scope chain and the enclosing function, then set
-        // up a fresh scope for the function's own variables.
-        let old_scopes = std::mem::take(&mut self.scopes);
-        self.scopes = vec![HashMap::new()];
-        let old_function = self.current_function.replace(function);
+        self.compile_llvm_function(function, params, &mut func.body, func.span)?;
 
-        // Allocate stack storage for each parameter and store the incoming value.
-        // The type checker guarantees that every parameter has an inferred type.
-        for (i, param) in func.params.iter().enumerate() {
-            let param_val = function.get_nth_param(i as u32).unwrap();
-            let hulk_ty = param.ty.as_ref().expect("parameter type not inferred");
-            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
-            let alloca = self.builder.build_alloca(llvm_ty, &param.name)
-                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
-            self.builder.build_store(alloca, param_val)
-                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(func.span) })?;
-            self.insert_var(param.name.clone(), alloca);
-        }
-
-        // Generate the IR for the body expression.
-        let body_val = func.body.accept(self)?;
-
-        // The result of the function is the value produced by its body.
-        self.builder.build_return(Some(&body_val))
-            .map_err(|e| CompilerError::CodegenError {
-                msg: e.to_string(),
-                span: Some(func.span),
-            })?;
-
-        // Restore the previous scope chain and the surrounding function context.
-        self.scopes = old_scopes;
-        self.current_function = old_function;
-
-        Ok(body_val.into())
+        Ok(self.context.f64_type().const_float(0.0).into())
     }
 
     /// Generates LLVM IR for a string literal expression.
@@ -434,32 +408,35 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
 
     fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
-        // Casos especiales – funciones que necesitan adaptación
+        // Special cases – functions that require custom handling
         match expr.func.as_str() {
             "rand" => return self.compile_rand_call(expr),
             "log"  => return self.compile_log_call(expr),
-            "print" => return self.compile_print_call(expr), 
-            _ => { /* continuar con la búsqueda genérica */ }
+            "print" => return self.compile_print_call(expr),
+            _ => { /* continue with generic lookup */ }
         }
 
-        // Búsqueda genérica en el módulo LLVM (built‑ins simples + usuario)
+        // Generic lookup in the LLVM module (simple built-ins + user functions)
         let func = self.module.get_function(&expr.func)
             .ok_or_else(|| CompilerError::CodegenError {
                 msg: format!("undefined function '{}'", expr.func),
                 span: Some(expr.span),
             })?;
 
+        // Compile each argument expression recursively
         let mut args = Vec::new();
         for arg in &mut expr.args {
             args.push(arg.accept(self)?.into());
         }
 
+        // Build the LLVM call instruction
         let call_site = self.builder.build_call(func, &args, "calltmp")
             .map_err(|e| CompilerError::CodegenError {
                 msg: e.to_string(),
                 span: Some(expr.span),
             })?;
 
+        // The call returns a value; extract it (left side of the call result)
         Ok(call_site.try_as_basic_value().left().unwrap().into())
     }
 
@@ -478,7 +455,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     msg: "type not inferred for let binding".to_string(),
                     span: Some(expr.span),
                 })?;
-            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?;
 
             // Allocate stack space for the variable
             let alloca = self.builder.build_alloca(llvm_ty, &name)
@@ -507,7 +484,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(body_val)
     }
 
-    fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
+   fn visit_variable(&mut self, expr: &mut VariableExpr) -> Self::Result {
         // Look up the variable in the scope stack
         match self.lookup_var(&expr.name) {
             Some(ptr) => {
@@ -516,7 +493,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     msg: format!("type not inferred for variable '{}'", expr.name),
                     span: Some(expr.span),
                 })?;
-                let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+                let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?;
 
                 // Load the value from the pointer
                 let value = self.builder.build_load(llvm_ty, ptr, &expr.name)
@@ -534,29 +511,23 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
-        // Look up the variable (TypeChecker already verified it exists)
-        // match self.lookup_var(&expr.name) {
-        //     Some(ptr) => {
-        //         // Evaluate the right‑hand side
-        //         let new_val = expr.value.accept(self)?;
+        // 1. Get a pointer to the storage location (lvalue)
+        let ptr = self.eval_lvalue(&mut *expr.lhs)?;
 
-        //         // Store the new value into the variable's location
-        //         self.builder.build_store(ptr, new_val)
-        //             .map_err(|e| CompilerError::CodegenError {
-        //                 msg: e.to_string(),
-        //                 span: Some(expr.span),
-        //             })?;
+        // 2. Evaluate the right‑hand side
+        let new_val = expr.value.accept(self)?;
 
-        //         Ok(new_val)   // assignment returns the assigned value in HULK
-        //     }
-        //     None => Err(CompilerError::CodegenError {
-        //         msg: format!("cannot assign to undefined variable '{}'", expr.name),
-        //         span: Some(expr.span),
-        //     }),
-        // }
-        todo!()
+        // 3. Store the new value into the location
+        self.builder.build_store(ptr, new_val)
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // 4. Assignment returns the assigned value (HULK semantics)
+        Ok(new_val.into())
     }
-
+  
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
         let mut last_value: Option<BasicValueEnum<'ctx>> = None;
 
@@ -574,7 +545,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             msg: "type not inferred for while expression".to_string(),
             span: Some(expr.span),
         })?;
-        let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty);
+        let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?;
 
         // Create the basic blocks that will form the loop structure.
         let cond_block = self.context.append_basic_block(
@@ -594,7 +565,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         // a sensible default (0 for numbers, empty string for strings, false for
         // booleans).  This avoids needing a phi node and works for all primitive
         // types.
-        let default_val = self.default_value_for_type(hulk_ty);
+        let default_val = self.default_value_for_type(hulk_ty)?;
         let last_val_alloca = self.builder.build_alloca(llvm_ty, "while.last")
             .map_err(|e| CompilerError::CodegenError {
                 msg: e.to_string(),
@@ -669,7 +640,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             msg: "type not inferred for if expression".to_string(),
             span: Some(expr.span),
         })?;
-        let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty); // returns BasicTypeEnum
+        let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?; 
 
         // 2. Create the basic blocks that form the control‑flow skeleton.
         let then_block = self.context.append_basic_block(
@@ -731,11 +702,11 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(phi.as_basic_value().into())
     }   
-    
+
     fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result {
         todo!()
     }
-    
+
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
         todo!()
     }
@@ -763,6 +734,4 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     fn visit_attribute_access(&mut self, e: &mut expr::AttributeAccessExpr) -> Self::Result {
         todo!()
     }
-
-  
 }
