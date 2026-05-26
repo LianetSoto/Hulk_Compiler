@@ -2,6 +2,7 @@ use crate::error::{CompilerError, SourceMap, report_error};
 use crate::parser::parse_program;
 use crate::semantic::TypeChecker;
 use crate::codegen::LlvmCodeGen;
+use crate::transform::MonomorphizationPass;
 use crate::gen_lex::lexer::build_lexer;
 use crate::ast::{PrettyPrinter, Node};
 use inkwell::context::Context;
@@ -16,7 +17,10 @@ use std::process;
 /// * `execute` - Whether to compile the IR to an executable and run it.
 /// * `filename` - The name of the source file (used for error reporting).
 /// * `print_ast` - If true, prints the Abstract Syntax Tree after parsing.
-pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str, print_ast: bool) -> Result<(), CompilerError> {
+pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str, 
+               print_parsed:bool, print_typed:bool, print_mono: bool) 
+        -> Result<(), CompilerError> 
+{
     let source_map = SourceMap::new(source_code.to_string());
 
     let patterns = vec![
@@ -89,12 +93,11 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         }
     };
 
-    // ---- AST PRINTING (IF REQUESTED) ----
-    // if print_ast {
+    if print_parsed {
         let mut printer = PrettyPrinter::new();
         ast.accept(&mut printer);
         println!("=== Abstract Syntax Tree ===\n{}", printer.into_string());
-    //}
+    }
 
     // 2. Semantic analysis (type checking)
     let mut type_checker = TypeChecker::new();
@@ -107,18 +110,39 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
     type_checker.resolve_ast(&mut ast);
 
-        
-    let mut printer = PrettyPrinter::new();
-    ast.accept(&mut printer);
-    println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
+    if print_typed {
+        let mut printer = PrettyPrinter::new();
+        ast.accept(&mut printer);
+        println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
+    }
+
+    // 3. Monomorphization (AST → AST without generics)
+    let mut mono_pass = MonomorphizationPass::new();
+    if let Err(err) = mono_pass.run(&mut ast) {
+        report_error(&err, &source_map, filename);
+        process::exit(1);
+    }
+
+    if print_mono {
+        let mut printer = PrettyPrinter::new();
+        ast.accept(&mut printer);
+        println!("=== AST after monomorphization ===\n{}", printer.into_string());
+    }
     
-    // 3. Code generation (LLVM IR)
+    // 4. Code generation (LLVM IR)
     let context = Context::create();
     let mut codegen = LlvmCodeGen::new(&context, "hulk_module");
-    codegen.compile(&mut ast)?;
-    codegen.write_to_file(output_ir)?;
+    if let Err(err) = codegen.compile(&mut ast) {
+        report_error(&err, &source_map, filename);
+        process::exit(1);
+    }
 
-    // 4. Optional execution
+    if let Err(err) = codegen.write_to_file(output_ir) {
+        report_error(&err, &source_map, filename);
+        process::exit(1);
+    }
+
+    // 5. Optional execution
     if execute {
         let exec_path = output_ir.replace(".ll", "");
         compile_and_run(output_ir, &exec_path)?;

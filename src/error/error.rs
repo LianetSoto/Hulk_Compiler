@@ -16,11 +16,14 @@ pub enum CompilerError {
     #[error("Undefined variable '{name}'")]
     UndefinedVariable { name: String, span: Span },
 
-    #[error("code generation error: {msg}")]
+    #[error("Code generation error: {msg}")]
     CodegenError { msg: String, span: Option<Span> },
 
     #[error("I/O error: {0}")]
     IoError(String), 
+
+    #[error("Monomorphization error: {msg}")]
+    MonomorphizationError { msg: String, span: Span },
 
     // ... otros errores
 }

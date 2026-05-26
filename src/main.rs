@@ -1,4 +1,3 @@
-
 mod lexer;
 mod parser;
 mod ast;
@@ -7,6 +6,7 @@ mod semantic;
 mod codegen;
 mod compiler;
 mod gen_lex;
+mod transform;
 
 use compiler::compile;
 use std::fs;
@@ -24,7 +24,7 @@ fn main() {
         process::exit(1);
     });
 
-    if let Err(e) = compile(&source, "output.ll", true, filename,false) {
+    if let Err(e) = compile(&source, "output.ll", true, filename,false, true, true) {
         process::exit(1);
     }
 }
