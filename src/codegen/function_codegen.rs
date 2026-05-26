@@ -102,6 +102,46 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         }
     }
 
+    pub(crate) fn compile_llvm_function(
+        &mut self,
+        function: FunctionValue<'ctx>,
+        params: Vec<(String, BasicTypeEnum<'ctx>)>, 
+        body: &mut Box<Expr>,
+        span: Span,
+    ) -> Result<(), CompilerError> {
+
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
+
+        // Remember the current scope chain and the enclosing function, then set
+        // up a fresh scope for the function's own variables.
+        let old_scopes = std::mem::take(&mut self.scopes);
+        self.scopes = vec![HashMap::new()];
+        let old_function = self.current_function.replace(function);
+
+        // Allocate stack storage for each parameter and store the incoming value.
+        for (i, (name, llvm_ty)) in params.iter().enumerate() {
+            let param_val = function.get_nth_param(i as u32).unwrap();
+            let alloca = self.builder.build_alloca(*llvm_ty, name)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+            self.builder.build_store(alloca, param_val)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+            self.insert_var(name.clone(), alloca);
+        }
+
+        // Generate the IR for the body expression.
+        let body_val = body.accept(self)?;
+
+        // The result of the function is the value produced by its body.
+        self.builder.build_return(Some(&body_val))
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+
+        // Restore the previous scope chain and the surrounding function context.
+        self.scopes = old_scopes;
+        self.current_function = old_function;
+        Ok(())
+    }
+
     // This method delegates to the C standard library function `printf` to perform the
     // actual output. It selects the appropriate format specifier and argument conversion
     // based on the static type of the expression being printed.
