@@ -2,9 +2,9 @@ use super::llvm::LlvmCodeGen;
 use crate::ast::*;
 use std::collections::HashMap;
 use inkwell::values::{FunctionValue};
-use crate::error::CompilerError;
+use crate::error::{Span, CompilerError};
 use crate::semantic::HulkType;
-use inkwell::types::BasicTypeEnum;
+use inkwell::types::{FunctionType, BasicTypeEnum, BasicMetadataTypeEnum};
 use inkwell::values::BasicValueEnum;
 
 impl<'ctx> LlvmCodeGen<'ctx> {
@@ -14,17 +14,17 @@ impl<'ctx> LlvmCodeGen<'ctx> {
     pub(crate) fn declare_all_functions(
         &self,
         user_funcs: &[FunctionDef],
-    ) -> HashMap<String, FunctionValue<'ctx>> {
-        // 1. Built‑ins
+    ) -> Result<HashMap<String, FunctionValue<'ctx>>, CompilerError> {
+        // 1. Built‑ins 
         self.declare_all_builtins();
 
         // 2. User functions
         let mut map = HashMap::new();
         for func in user_funcs {
-            let f = self.declare_user_function_signature(func);
+            let f = self.declare_user_function_signature(func, None)?;
             map.insert(func.name.clone(), f);
         }
-        map
+        Ok(map)
     }
 
     fn declare_all_builtins(&self) {
@@ -43,31 +43,103 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         // self.declare_memcpy();
     }
 
-    fn declare_user_function_signature(&self, func: &FunctionDef) -> FunctionValue<'ctx> {
-        let param_types: Vec<BasicTypeEnum<'ctx>> = func.params.iter()
-            .map(|p| {
-                let hulk_ty = p.ty.as_ref().expect("parameter type not inferred");
-                self.hulk_type_to_llvm_type(hulk_ty)
-            })
+    /// Declares the LLVM function signature for a user‑defined HULK function.
+    ///
+    /// If `llvm_name` is `Some`, that name is used for the LLVM function
+    /// Otherwise `func.name` is used.
+    /// The returned `FunctionValue` can later be used to compile the function body.
+    pub(crate) fn declare_user_function_signature(
+        &self,
+        func: &FunctionDef,
+        llvm_name: Option<&str>,
+    ) -> Result<FunctionValue<'ctx>, CompilerError> {
+        let param_types: Result<Vec<BasicTypeEnum<'ctx>>, CompilerError> = func.params.iter()
+            .map(|p| self.hulk_type_to_llvm_type(p.ty.as_ref().unwrap()))
             .collect();
-        let ret_hulk = func.ty.as_ref().unwrap_or(&HulkType::Number);
-        let ret_type = self.hulk_type_to_llvm_type(ret_hulk);
-        let fn_type = match ret_type {
-            BasicTypeEnum::FloatType(f) => f.fn_type(
-                &param_types.iter().map(|t| (*t).into()).collect::<Vec<_>>(),
-                false,
-            ),
-            BasicTypeEnum::IntType(i) => i.fn_type(
-                &param_types.iter().map(|t| (*t).into()).collect::<Vec<_>>(),
-                false,
-            ),
-            BasicTypeEnum::PointerType(p) => p.fn_type(
-                &param_types.iter().map(|t| (*t).into()).collect::<Vec<_>>(),
-                false,
-            ),
+        let param_types = param_types?;
+
+        let ret_type = self.hulk_type_to_llvm_type(func.ty.as_ref().unwrap_or(&HulkType::Number))?;
+
+        let name = llvm_name.unwrap_or(&func.name);
+        Ok(self.declare_function_generic(name, ret_type, &param_types))
+    }
+
+    /// Low‑level helper that adds a function declaration to the LLVM module.
+    /// It takes the LLVM name, the return type and a list of parameter types.
+    pub(crate) fn declare_function_generic(
+        &self,
+        llvm_name: &str,
+        ret_type: BasicTypeEnum<'ctx>,
+        param_types: &[BasicTypeEnum<'ctx>],
+    ) -> FunctionValue<'ctx> {
+        let fn_type = self.build_fn_type(ret_type, param_types);
+        self.module.add_function(llvm_name, fn_type, None)
+    }
+
+    /// Builds an LLVM function type from a return type and a list of parameter types.
+    /// This helper centralises the creation of the `FunctionType` that is required
+    /// when declaring a function with `add_function`.  It converts every parameter
+    /// type from `BasicTypeEnum` to `BasicMetadataTypeEnum` (the type expected by
+    /// the `fn_type` method) and then dispatches on the concrete return type to
+    /// call the appropriate `fn_type` constructor (Float, Int or Pointer).
+    fn build_fn_type(
+        &self,
+        ret_type: BasicTypeEnum<'ctx>,
+        param_types: &[BasicTypeEnum<'ctx>],
+    ) -> FunctionType<'ctx> {
+        // Convert each parameter to the required metadata enum variant.
+        let params: Vec<BasicMetadataTypeEnum<'ctx>> = param_types
+            .iter()
+            .map(|t| (*t).into())
+            .collect();
+
+        // The return type decides which `.fn_type()` method we call.
+        match ret_type {
+            BasicTypeEnum::FloatType(f)   => f.fn_type(&params, false),
+            BasicTypeEnum::IntType(i)     => i.fn_type(&params, false),
+            BasicTypeEnum::PointerType(p) => p.fn_type(&params, false),
             _ => unimplemented!("unsupported return type for function"),
-        };
-        self.module.add_function(&func.name, fn_type, None)
+        }
+    }
+
+    pub(crate) fn compile_llvm_function(
+        &mut self,
+        function: FunctionValue<'ctx>,
+        params: Vec<(String, BasicTypeEnum<'ctx>)>, 
+        body: &mut Box<Expr>,
+        span: Span,
+    ) -> Result<(), CompilerError> {
+
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
+
+        // Remember the current scope chain and the enclosing function, then set
+        // up a fresh scope for the function's own variables.
+        let old_scopes = std::mem::take(&mut self.scopes);
+        self.scopes = vec![HashMap::new()];
+        let old_function = self.current_function.replace(function);
+
+        // Allocate stack storage for each parameter and store the incoming value.
+        for (i, (name, llvm_ty)) in params.iter().enumerate() {
+            let param_val = function.get_nth_param(i as u32).unwrap();
+            let alloca = self.builder.build_alloca(*llvm_ty, name)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+            self.builder.build_store(alloca, param_val)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+            self.insert_var(name.clone(), alloca);
+        }
+
+        // Generate the IR for the body expression.
+        let body_val = body.accept(self)?;
+
+        // The result of the function is the value produced by its body.
+        self.builder.build_return(Some(&body_val))
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+
+        // Restore the previous scope chain and the surrounding function context.
+        self.scopes = old_scopes;
+        self.current_function = old_function;
+        Ok(())
     }
 
     // This method delegates to the C standard library function `printf` to perform the
