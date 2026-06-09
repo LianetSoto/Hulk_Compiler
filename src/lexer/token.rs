@@ -68,7 +68,6 @@ pub enum Token {
     // Types and OOP
     Type,
     Inherits,
-    SelfKeyword,
     BaseKeyword,
     New,
     NumberType,   // "Number"
@@ -143,7 +142,6 @@ impl fmt::Display for Token {
             Token::Str(s) => write!(f, "\"{}\"", s),
             Token::Type => write!(f, "type"),
             Token::Inherits => write!(f, "inherits"),
-            Token::SelfKeyword => write!(f, "self"),
             Token::BaseKeyword => write!(f, "base"),
             Token::New => write!(f, "new"),
             Token::NumberType => write!(f, "Number"),
