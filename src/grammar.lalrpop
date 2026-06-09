@@ -57,7 +57,6 @@ extern {
         "=>" => Token::Arrow,
         "type"   => Token::Type,
         "inherits" => Token::Inherits,
-        "self"   => Token::SelfKeyword,
         "base"   => Token::BaseKeyword,
         "new"    => Token::New,
         "Number" => Token::NumberType,
@@ -579,22 +578,50 @@ UnaryExpr: Box<Expr> = {
 
 PostfixExpr: Box<Expr> = {
     <e:AtomicExpr> => e,
+    // If the object is a VariableExpr named "self", convert it to SelfExpr
     <start:@L> <obj:PostfixExpr> "." <m:"identifier"> <end:@R> => {
-        Box::new(Expr::AttributeAccess(AttributeAccessExpr {
-            object: obj,
-            attribute: m,
-            span: Span::new(start, end),
-            ty: None,
-        }))
+        match obj.as_ref() {
+            Expr::Variable(v) if v.name == "self" => {
+                let self_expr = Box::new(Expr::SelfExpr(SelfExpr { span: v.span, ty: None }));
+                Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                    object: self_expr,
+                    attribute: m,
+                    span: Span::new(start, end),
+                    ty: None,
+                }))
+            }
+            _ => {
+                Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                    object: obj,
+                    attribute: m,
+                    span: Span::new(start, end),
+                    ty: None,
+                }))
+            }
+        }
     },
     <start:@L> <obj:PostfixExpr> "." <m:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
-        Box::new(Expr::MethodCall(MethodCallExpr {
-            object: obj,
-            method: m,
-            args,
-            span: Span::new(start, end),
-            ty: None,
-        }))
+        match obj.as_ref() {
+            Expr::Variable(v) if v.name == "self" => {
+                let self_expr = Box::new(Expr::SelfExpr(SelfExpr { span: v.span, ty: None }));
+                Box::new(Expr::MethodCall(MethodCallExpr {
+                    object: self_expr,
+                    method: m,
+                    args,
+                    span: Span::new(start, end),
+                    ty: None,
+                }))
+            }
+            _ => {
+                Box::new(Expr::MethodCall(MethodCallExpr {
+                    object: obj,
+                    method: m,
+                    args,
+                    span: Span::new(start, end),
+                    ty: None,
+                }))
+            }
+        }
     },
 };
 
@@ -656,12 +683,7 @@ AtomicExpr: Box<Expr> = {
         }))
     },
 
-     // self and base
-    <start:@L> "self" <end:@R> => Box::new(Expr::SelfExpr(SelfExpr {
-        span: Span::new(start, end),
-        ty: None,
-    })),
-
+    // base
     <start:@L> "base" <end:@R> => Box::new(Expr::Base(BaseExpr {
         span: Span::new(start, end),
         ty: None,
