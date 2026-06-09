@@ -236,7 +236,8 @@ TypeDef: TypeDef = {
         }
         TypeDef {
             name,
-            params: params.unwrap_or_default(),   // ← clave
+            params: params.unwrap_or_default(),
+            param_types: Vec::new(),
             parent,
             attributes: attrs,
             methods: meths,
