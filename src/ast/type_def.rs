@@ -6,6 +6,7 @@ use crate::semantic::types::HulkType;
 pub struct TypeDef {
     pub name: String,
     pub params: Vec<String>, 
+    pub param_types: Vec<HulkType>,
     pub parent: Option<Parent>,
     pub attributes: Vec<Attribute>,
     pub methods: Vec<Method>,

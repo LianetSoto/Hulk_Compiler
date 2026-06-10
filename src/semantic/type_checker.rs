@@ -812,14 +812,12 @@ impl Visitor for TypeChecker {
         // Si hay un tipo padre, heredar sus atributos y métodos
         if let Some(ref pname) = parent_name {
             if let Some(parent_info) = self.types.get(pname) {
-                // Copiar atributos del padre
                 for (attr_name, attr_ty) in &parent_info.attributes {
                     type_info.attributes.insert(attr_name.clone(), attr_ty.clone());
                     if !type_info.attr_order.contains(attr_name) {
                         type_info.attr_order.push(attr_name.clone());
                     }
                 }
-                // Copiar métodos del padre (se pueden sobrescribir)
                 for (method_name, method_info) in &parent_info.methods {
                     type_info.methods.insert(method_name.clone(), method_info.clone());
                 }
@@ -845,7 +843,6 @@ impl Visitor for TypeChecker {
             if let Some(current_type_info) = self.types.get_mut(current_type) {
                 for (param_idx, param_name) in type_def.params.iter().enumerate() {
                     if !current_type_info.attributes.contains_key(param_name) {
-                        // Crear un atributo implícito inicializado con el parámetro
                         if let Some(param_var) = param_vars.get(param_idx) {
                             current_type_info.attributes.insert(param_name.clone(), param_var.clone());
                             current_type_info.attr_order.push(param_name.clone());
@@ -863,8 +860,18 @@ impl Visitor for TypeChecker {
         }
         self.current_type = None;
 
+        // Resolver los tipos de los parámetros formales
+        let resolved_param_types: Vec<HulkType> = param_vars.iter()
+        .map(|v| self.unifier.resolve(v))
+        .collect();
+
+        println!("Type {} param types: {:?}", type_def.name, resolved_param_types);
+
+        type_def.param_types = resolved_param_types;
+
         HulkType::Object
     }
+
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
         let init_ty = attr.init_expr.accept(self);
         if let Some(ann) = &attr.ty_annotation {
@@ -888,17 +895,20 @@ impl Visitor for TypeChecker {
     
     fn visit_method(&mut self, method: &mut Method) -> Self::Result {
         let current_type_name = self.current_type.as_ref().unwrap().clone();
-        
+
         self.enter_scope();
-        let self_ty = HulkType::Object;
+
+        // Declarar self con el tipo de la clase actual (no Object)
+        let self_ty = HulkType::Class(current_type_name.clone());
         self.declare_var("self".to_string(), self_ty.clone());
-        // Crear variables de tipo para parámetros y retorno (igual que con funciones)
+
+        // Crear variables de tipo para los parámetros
         let param_vars: Vec<HulkType> = (0..method.params.len())
             .map(|_| self.unifier.new_var())
             .collect();
         let ret_var = self.unifier.new_var();
 
-        // Guardar en MethodInfo (para luego)
+        // Guardar la información del método (todavía con variables, sin resolver)
         let method_info = MethodInfo {
             param_types: param_vars.clone(),
             return_type: ret_var.clone(),
@@ -908,24 +918,49 @@ impl Visitor for TypeChecker {
                 type_info.methods.insert(method.name.clone(), method_info);
             }
         }
-        // Declarar parámetros con sus variables de tipo
+
+        // Declarar parámetros y procesar anotaciones de tipo
         for (param, var_ty) in method.params.iter_mut().zip(param_vars.iter()) {
+            // Si hay anotación de tipo, unificarla con la variable de tipo
+            if let Some(ann) = &param.ty_annotation {
+                // Convertir UserDefined a Class si es necesario
+                let resolved_ann = match ann {
+                    HulkType::UserDefined(name) => HulkType::Class(name.clone()),
+                    _ => ann.clone(),
+                };
+                if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+                    self.add_type_error(msg, param.span);
+                }
+            }
             param.ty = Some(var_ty.clone());
             self.declare_var(param.name.clone(), var_ty.clone());
         }
-        // Chequear el cuerpo
+
+        // Procesar anotación de retorno del método
+        if let Some(ret_ann) = &method.ty_annotation {
+            let resolved_ret_ann = match ret_ann {
+                HulkType::UserDefined(name) => HulkType::Class(name.clone()),
+                _ => ret_ann.clone(),
+            };
+            if let Err(msg) = self.unifier.unify(&ret_var, &resolved_ret_ann) {
+                self.add_type_error(msg, method.span);
+            }
+        }
+
+        // Analizar el cuerpo
         let body_ty = method.body.accept(self);
-        // Unificar cuerpo con retorno
         if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
             self.add_type_error(msg, method.span);
         }
-        // Resolver tipos finales
+
+        // Resolver tipos finales (las variables de tipo que se unificaron se convierten)
         let resolved_params: Vec<HulkType> = param_vars.iter()
             .map(|v| self.unifier.resolve(v))
             .collect();
         let resolved_ret = self.unifier.resolve(&ret_var);
         method.ty = Some(resolved_ret.clone());
-        // Actualizar MethodInfo con tipos resueltos
+
+        // Actualizar la información guardada
         if let Some(type_name) = &self.current_type {
             if let Some(type_info) = self.types.get_mut(type_name) {
                 if let Some(m_info) = type_info.methods.get_mut(&method.name) {
@@ -934,6 +969,7 @@ impl Visitor for TypeChecker {
                 }
             }
         }
+
         self.exit_scope();
         resolved_ret
     }
@@ -1049,8 +1085,12 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_self(&mut self, expr: &mut SelfExpr) -> Self::Result {
-        // Buscar `self` en el ámbito (debe estar declarado en visit_method)
         if let Some(ty) = self.lookup_var("self") {
+            expr.ty = Some(ty.clone());
+            ty
+        } else if let Some(type_name) = &self.current_type {
+            // Fallback: si no se declaró (por algún error), usar el tipo actual
+            let ty = HulkType::Class(type_name.clone());
             expr.ty = Some(ty.clone());
             ty
         } else {
