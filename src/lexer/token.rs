@@ -51,6 +51,10 @@ pub enum Token {
     Or,
     Not,
 
+    //protocols
+    Protocol,
+    Extends,
+
 
     // Constants
     Pi,
@@ -149,6 +153,8 @@ impl fmt::Display for Token {
             Token::BooleanType => write!(f, "Boolean"),
             Token::ObjectType => write!(f, "Object"),
             Token::Range => write!(f, "range"),
+            Token::Protocol => write!(f, "protocol"),
+            Token::Extends => write!(f, "extends"),
         }
     }
 }

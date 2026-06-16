@@ -128,7 +128,8 @@ impl Lexer {
                     "base" => LexerToken::BaseKeyword,
                     "inherits" => LexerToken::Inherits,
                     "new" => LexerToken::New,
-                    
+                    "protocol" => LexerToken::Protocol,
+                    "extends" => LexerToken::Extends,
                     "range" => LexerToken::Range,
                     _ => LexerToken::Identifier(token_value),
                 };
@@ -257,6 +258,8 @@ impl Lexer {
                     "COLON" => LexerToken::Colon,
                     "Dot" => LexerToken::Dot,
                     "New" => LexerToken::New,
+                    "protocol" => LexerToken::Protocol,
+                    "extends" => LexerToken::Extends,
                     _ => {
                         // For unknown, perhaps skip or error
                         i += 1;
