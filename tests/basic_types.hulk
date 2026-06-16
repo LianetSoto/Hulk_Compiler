@@ -1,0 +1,68 @@
+// Test: user‑defined types (without inheritance / polymorphism)
+
+// Type with constructor arguments 
+type Point(x, y) {
+    x = x;
+    y = y;
+    getX() => self.x;
+    getY() => self.y;
+    setX(v) => self.x := v;
+    setY(v) => self.y := v;
+    
+    move(dx, dy) {
+        self.x := self.x + dx;
+        self.y := self.y + dy;
+    }
+
+    // method that shadows 'self' with a parameter
+    shadowSelf(self) => print(self);
+    // method that shadows 'self' with a let
+    testLetSelf() {
+        let self = "hidden" in
+        print(self);
+    }
+}
+
+// Type without constructor arguments 
+type Counter {
+    value = 0;
+    inc() => self.value := self.value + 1;
+    get() => self.value;
+}
+
+{
+    // 1. Create an instance with constructor arguments
+    let pt = new Point(3, 4) in {
+        print(pt.getX());        // 3
+        print(pt.getY());        // 4
+    };
+
+    // 2. Modify attributes via methods
+    let pt2 = new Point(10, 20) in {
+        pt2.setX(100);
+        pt2.setY(200);
+        print(pt2.getX());       // 100
+        print(pt2.getY());       // 200
+    };
+
+    // 3. Move point
+    let p = new Point(0, 0) in {
+        p.move(5, 6);
+        print(p.getX());         // 5
+        print(p.getY());         // 6
+    };
+
+    // 4. Type without constructor arguments
+    let c = new Counter() in {
+        print(c.get());          // 0
+        c.inc();
+        c.inc();
+        print(c.get());          // 2
+    };
+
+    // 5. Shadowing self
+    let pt3 = new Point(0, 0) in {
+        pt3.shadowSelf(42);      // 42          (parameter self hides instance)
+        pt3.testLetSelf();       // "hidden"    (let self hides instance)
+    };
+}

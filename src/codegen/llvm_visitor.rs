@@ -10,17 +10,55 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
     /// Generates LLVM IR for the entire HULK program.
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-   
-        // Declare every function (built‑ins and user‑defined) in the module.
+
+        // Register every user‑defined type and declare its methods
+        for type_def in &mut program.types {
+
+            // Build the LLVM struct for this type 
+            type_def.accept(self)?;  
+
+            // Declare the LLVM function for every method.
+            let owner = &type_def.name;
+            let struct_ty = self.type_structs[owner];
+            let self_ptr_ty: BasicTypeEnum = struct_ty
+                .ptr_type(inkwell::AddressSpace::default())
+                .into();
+
+            for method in &type_def.methods {
+                let func_name = format!("{}.{}", owner, method.name);
+
+                let mut param_types = vec![self_ptr_ty];
+                for p in &method.params {
+                    let hulk_ty = p.ty.as_ref().unwrap();
+                    param_types.push(self.hulk_type_to_llvm_type(hulk_ty)?);
+                }
+
+                let ret_ty = self.hulk_type_to_llvm_type(
+                    method.ty.as_ref().unwrap_or(&HulkType::Number),
+                )?;
+
+                self.declare_function_generic(&func_name, ret_ty, &param_types);
+            }
+        }
+    
+        // Declare all global function (built‑ins and user‑defined)
         let user_map = self.declare_all_functions(&program.functions)?;
         self.user_functions = user_map;
 
-        // Compile each user function body.
+        // Compile the bodies of all global functions
         for func in &mut program.functions {
             func.accept(self)?;
         }
 
-        // entry point (main) 
+        // Compile the bodies of all type-methods
+        for type_def in &mut program.types {
+            for method in &mut type_def.methods {
+                method.type_name = Some(type_def.name.clone()); 
+                method.accept(self)?;   
+            }
+        }
+
+        // Generate the `main` entry point
         let i32_type = self.context.i32_type();
         let main_type = i32_type.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_type, None);
@@ -710,35 +748,270 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         let struct_ty = self.build_struct_type(type_def)?;
 
         self.type_structs.insert(type_def.name.clone(), struct_ty);
+        self.type_defs.insert(type_def.name.clone(), type_def.clone()); 
 
         Ok(self.context.f64_type().const_float(0.0).into())
     }
+    
+    /// Generates LLVM IR for the `new` expression 
+    /// Allocates a heap object, initializes its fields, and returns a typed pointer.
+    fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
 
-    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
-        todo!()
+        // Look up the type definition and the LLVM struct
+        let type_def_ref = self.type_defs.get(&expr.type_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("unknown type '{}'", expr.type_name),
+                span: Some(expr.span),
+            }
+        })?;
+        let mut type_def = type_def_ref.clone();                    // mutable copy for attribute iteration
+        let struct_ty = self.type_structs[&expr.type_name]; // LLVM struct type (e.g., %Point)
+
+        // Allocate raw memory with malloc
+        let malloc_fn = self.declare_malloc();
+        let size_val = struct_ty.size_of()
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("unable to determine size of type '{}'", expr.type_name),
+                span: Some(expr.span),
+            })?;
+        let obj_ptr = self.builder.build_call(malloc_fn, &[size_val.into()], "new_obj")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: format!("malloc failed: {}", e),
+                span: Some(expr.span),
+            })?
+            .try_as_basic_value().left()
+            .and_then(|v| v.into_pointer_value().into())
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: "malloc did not return a pointer".to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // Cast the raw i8* to the concrete struct pointer
+        let typed_ptr = self.builder.build_pointer_cast(
+            obj_ptr,
+            struct_ty.ptr_type(inkwell::AddressSpace::default()),
+            "typed_obj",
+        )
+        .map_err(|e| CompilerError::CodegenError {
+            msg: format!("bitcast failed: {}", e),
+            span: Some(expr.span),
+        })?;
+
+        // Push a scope for constructor arguments 
+        self.push_scope();
+
+        // Evaluate constructor arguments and store them in local variables
+        for (param_name, arg_expr) in type_def.params.iter().zip(&mut expr.args) {
+            let arg_val = arg_expr.accept(self)?;
+            let hulk_ty = arg_expr.get_type().ok_or_else(|| CompilerError::CodegenError {
+                msg: "type not inferred for argument".to_string(),
+                span: Some(expr.span),
+            })?;
+            let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?;
+            let alloca = self.builder.build_alloca(llvm_ty, param_name)
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+            self.builder.build_store(alloca, arg_val)
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
+            self.insert_var(param_name.clone(), alloca);
+        }
+
+        // Initialize each attribute using struct_gep + store 
+        for (i, attr) in type_def.attributes.iter_mut().enumerate() {
+            let init_val = attr.init_expr.accept(self)?;
+            let field_ptr = self.builder.build_struct_gep(
+                struct_ty,
+                typed_ptr,
+                i as u32,
+                &format!("field_{}", i),
+            )
+            .map_err(|e| CompilerError::CodegenError {
+                msg: format!("GEP failed: {}", e),
+                span: Some(expr.span),
+            })?;
+            self.builder.build_store(field_ptr, init_val)
+                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        }
+
+        // Pop the argument scope and return the typed pointer 
+        self.pop_scope();
+        Ok(typed_ptr.into())
+    }
+
+    fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
+        // Get a pointer to the field and its HULK type.
+        let (ptr, attr_hulk_ty) = self.get_attribute_ptr(expr)?;
+
+        // Convert the HULK type to the corresponding LLVM type.
+        let llvm_ty = self.hulk_type_to_llvm_type(&attr_hulk_ty)?;
+
+        // Load the value from the field.
+        let loaded = self.builder.build_load(llvm_ty, ptr, &expr.attribute)
+            .map_err(|err| CompilerError::CodegenError {
+                msg: err.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        Ok(loaded.into())
     }
     
-    fn visit_method(&mut self, m: &mut Method) -> Self::Result {
-        todo!()
+    /// Compiles the body of a method belonging to a user‑defined type.
+    ///
+    /// Methods are lowered to regular LLVM functions whose name follows the
+    /// convention `{TypeName}.{methodName}` (e.g. `Point.getX`).  The first
+    /// parameter of every such function is always a pointer to the struct
+    /// that represents the receiver (`self`).  This method recovers the
+    /// already‑declared `FunctionValue` from the module, builds the
+    /// parameter list expected by `compile_llvm_function` (starting with
+    /// `self` followed by the declared method parameters), and delegates
+    /// the actual body compilation to that shared helper.
+    ///
+    /// # Conventions
+    /// - The method must have been declared in a previous pass (e.g. during
+    ///   `visit_program`) with the name `{TypeName}.{methodName}`.
+    /// - The first argument of the LLVM function is `%TypeName*` (the
+    ///   receiver object).
+    /// - Subsequent arguments correspond to the method's formal parameters
+    ///   in declaration order.
+    ///
+    /// # Returns
+    /// A dummy `BasicValueEnum` (constant `f64 0.0`) because the return
+    /// value of `Visitor::visit_method` is not used outside this call;
+    /// the actual return value of the method is emitted by the `ret`
+    /// instruction inside `compile_llvm_function`.
+    fn visit_method(&mut self, method: &mut Method) -> Self::Result {
+      
+        let owner_type = method.type_name.as_ref().unwrap();
+        let func_name = format!("{}.{}", owner_type, method.name);
+        let func = self.module.get_function(&func_name).expect("undeclared method");
+        
+        let mut params = Vec::new();
+     
+        let struct_ty = self.type_structs[owner_type];
+        let ptr_ty = struct_ty.ptr_type(inkwell::AddressSpace::default()).into();
+        params.push(("self".to_string(), ptr_ty));
+        for param in &method.params {
+            let llvm_ty = self.hulk_type_to_llvm_type(param.ty.as_ref().unwrap())?;
+            params.push((param.name.clone(), llvm_ty));
+        }
+
+        self.compile_llvm_function(func, params, &mut method.body, method.span)?;
+        Ok(self.context.f64_type().const_float(0.0).into())
     }
     
-    fn visit_new(&mut self, e: &mut NewExpr) -> Self::Result {
-        todo!()
+    /// Generates LLVM IR for a method call expression (`obj.method(args)`).
+    ///
+    /// In HULK every method receives an implicit first argument `self` that
+    /// points to the instance.  This method therefore:
+    /// 1. Evaluates the object expression to obtain a pointer to the struct.
+    /// 2. Determines the concrete type of the object (using the type annotation
+    ///    left by the `TypeChecker`).
+    /// 3. Looks up the LLVM function whose name follows the convention
+    ///    `{TypeName}.{methodName}` (e.g. `Point.getX`).
+    /// 4. Builds the argument list: first the object pointer, then the
+    ///    remaining method arguments (evaluated recursively).
+    /// 5. Emits a `call` instruction and returns the result.
+    ///
+    /// # Errors
+    /// - If the type of the object cannot be determined.
+    /// - If the method is not found in the LLVM module.
+    /// - If any argument fails to compile.
+    fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
+
+        // 1. Evaluate the object expression
+        let obj_val = expr.object.accept(self)?;
+
+        // 2. Retrieve the static type of the object (HULK type)
+        let hulk_ty = expr.object.get_type().ok_or_else(|| CompilerError::CodegenError {
+            msg: "type not inferred for object".to_string(),
+            span: Some(expr.span),
+        })?;
+
+        // Extract the class name.  We assume HULK types for user‑defined
+        // classes are represented as `HulkType::Class(name)`.
+        let type_name = match hulk_ty {
+            HulkType::Class(name) => name.as_str(),
+            _ => {
+                return Err(CompilerError::CodegenError {
+                    msg: format!("expected an object type, found {:?}", hulk_ty),
+                    span: Some(expr.span),
+                });
+            }
+        };
+
+        // 3. Look up the LLVM function for the method
+        let func_name = format!("{}.{}", type_name, expr.method);
+        let func = self.module.get_function(&func_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("method '{}' not found in type '{}'", expr.method, type_name),
+                span: Some(expr.span),
+            }
+        })?;
+
+        // 4. Build the argument list: self + user arguments
+        let obj_ptr = obj_val.into_pointer_value();
+        let mut args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = vec![obj_ptr.into()];
+
+        for arg in &mut expr.args {
+            args.push(arg.accept(self)?.into());
+        }
+
+        // 5. Emit the call
+        let call_site = self.builder.build_call(func, &args, "calltmp")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        Ok(call_site.try_as_basic_value().left().unwrap().into())
     }
     
-    fn visit_method_call(&mut self, e: &mut MethodCallExpr) -> Self::Result {
-        todo!()
-    }
-    
+    /// Generates LLVM IR for the `self` expression.
+    ///
+    /// `self` may refer either to the current instance (a pointer to the
+    /// object) or to a local variable that shadows the original `self`.
     fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result {
-        todo!()
+
+        // Look up the storage pointer for `self` in the current scope.
+        let ptr = self
+            .lookup_var("self")
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: "self variable not found in current scope".to_string(),
+                span: Some(e.span),
+            })?;
+
+        // Retrieve the HULK type that the TypeChecker assigned to this
+        // occurrence of `self`.
+        let hulk_ty = e.ty.as_ref().ok_or_else(|| CompilerError::CodegenError {
+            msg: "type not inferred for self".to_string(),
+            span: Some(e.span),
+        })?;
+
+        // Convert the HULK type to its LLVM representation.
+        let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?;
+
+        // Load the value from the storage pointer.
+        let loaded = self
+            .builder
+            .build_load(llvm_ty, ptr, "self")
+            .map_err(|err| CompilerError::CodegenError {
+                msg: err.to_string(),
+                span: Some(e.span),
+            })?;
+
+        Ok(loaded.into())
     }
     
     fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
         todo!()
     }
-    
-    fn visit_attribute_access(&mut self, e: &mut expr::AttributeAccessExpr) -> Self::Result {
+
+    fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
         todo!()
     }
 }
