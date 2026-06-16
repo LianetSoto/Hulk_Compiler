@@ -174,40 +174,43 @@ ParentSpec: Parent = {
     }
 };
 
-// Function parameters
+// Function parameters (with optional type annotation)
+FunctionParam: Params = {
+    <start:@L> <id:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
+        Params {
+            name: id,
+            ty: None,
+            ty_annotation: ty_ann,
+            span: Span::new(start, end),
+        }
+    },
+};
+
 FunctionParams: Vec<Params> = {
     <params:Comma<FunctionParam>> => params,
 };
 
-FunctionParam: Params = {
-    <start:@L> <id:"identifier"> <end:@R> => {
-        Params {
-            name: id,
-            ty: None,
-            span: Span::new(start, end),
-        }
-    },
-};
-
 // Function definition
 FunctionDef: FunctionDef = {
-    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ty:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
         FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
-            ty: ret_ty,
+            ty: None,
+            ty_annotation: ret_ann,
             is_generic: false,
         }
     },
-    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ty:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
+    <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ann:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
         FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
-            ty: ret_ty,
+            ty: None,
+            ty_annotation: ret_ann,
             is_generic: false,
         }
     },
@@ -227,7 +230,6 @@ TypeDef: TypeDef = {
     <params:("(" <TypeParams> ")")?>
     <parent:ParentSpec?>
     "{" <members:TypeMembers> "}" <end:@R> => {
-        println!("TypeDef {} params: {:?}", name, params);
         let mut attrs = vec![];
         let mut meths = vec![];
         for m in members {
@@ -360,16 +362,16 @@ LetExpr: Box<Expr> = {
     }
 };
 
-LetBindings: Vec<(String, Box<Expr>)> = {
+Binding: (String, Option<HulkType>, Box<Expr>) = {
+    <id:"identifier"> <ty_ann:(":" <Type>)?> "=" <e:Expr> => (id, ty_ann, e)
+};
+
+LetBindings: Vec<(String, Option<HulkType>, Box<Expr>)> = {
     <first:Binding> <rest:( "," <Binding> )*> => {
         let mut bindings = vec![first];
         for b in rest { bindings.push(b); }
         bindings
     }
-};
-
-Binding: (String, Box<Expr>) = {
-    <id:"identifier"> "=" <e:Expr> => (id, e)
 };
 
 //Destructive assignment (:=)
@@ -427,8 +429,8 @@ ForExpr: Box<Expr> = {
     <start:@L> "for" "(" <var:"identifier"> "in" "range" "(" <from:Expr> "," <to:Expr> ")" ")" <body:Expr> <end:@R> => {
         let span = Span::new(start, end);
 
-        // Bind the loop variable to the start value: let var = from
-        let binding = (var.clone(), from);
+        // Bind the loop variable to the start value (no type annotation allowed in for)
+        let binding = (var.clone(), None, from);
 
         // Condition: var < to
         let cond = Box::new(Expr::BinaryOp(BinaryOpExpr {

@@ -71,17 +71,35 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_function_def(&mut self, func: &mut FunctionDef) {
-        let params: Vec<String> = func.params.iter()
+        // Construir representación de parámetros
+        let params_str: Vec<String> = func.params.iter()
             .map(|p| {
-                let ty_str = Self::type_str(&p.ty);
-                format!("{}{}", p.name, ty_str)
+                let ann = match &p.ty_annotation {
+                    Some(t) => format!(": {:?}", t),
+                    None => String::new(),
+                };
+                let inf = match &p.ty {
+                    Some(t) => format!(" [infer: {:?}]", t),
+                    None => String::new(),
+                };
+                format!("{}{}{}", p.name, ann, inf)
             })
             .collect();
-        let params_str = params.join(", ");
-        let ret_str = Self::type_str(&func.ty);
-        // Línea única con generic
-        self.write_line(&format!("FunctionDef {{ name: '{}', generic: {}, params: [{}]{}", 
-            func.name, func.is_generic, params_str, ret_str));
+        let params_display = params_str.join(", ");
+
+        // Anotación de retorno
+        let ret_ann = match &func.ty_annotation {
+            Some(t) => format!(" -> {:?}", t),
+            None => String::new(),
+        };
+        // Tipo inferido de retorno
+        let ret_inf = match &func.ty {
+            Some(t) => format!(" [infer: {:?}]", t),
+            None => String::new(),
+        };
+
+        self.write_line(&format!("FunctionDef {{ name: '{}', generic: {}, params: [{}]{}{}", 
+            func.name, func.is_generic, params_display, ret_ann, ret_inf));
         self.indent += 1;
         self.write_line("body:");
         self.indent += 1;
@@ -162,13 +180,16 @@ impl Visitor for PrettyPrinter {
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
-        let ty_str = Self::type_str(&expr.ty);
-        self.write_line(&format!("Let {{{}", ty_str));
+        self.write_line("Let {");
         self.indent += 1;
         self.write_line("bindings: [");
         self.indent += 1;
-        for (name, value) in &mut expr.bindings {
-            self.write_line(&format!("{} =", name));
+        for (name, ty_ann, value) in &mut expr.bindings {
+            let ty_str = match ty_ann {
+                Some(t) => format!(": {:?}", t),
+                None => String::new(),
+            };
+            self.write_line(&format!("{}{} =", name, ty_str));
             self.indent += 1;
             value.accept(self);
             self.indent -= 1;
