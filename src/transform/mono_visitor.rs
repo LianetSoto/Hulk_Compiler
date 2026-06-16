@@ -8,10 +8,10 @@ impl Visitor for MonomorphizationPass {
     type Result = Result<(), CompilerError>;
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
-        // 1. Transform the main expression (may call generic functions)
+        // Transform the main expression (may call generic functions)
         program.main_expr.accept(self)?;
 
-        // 2. Transform all original concrete functions – they may also call generic ones
+        // Transform all concrete function bodies (they may also call generic ones)
         let concrete_names: Vec<String> = program.functions
             .iter()
             .filter(|f| !f.is_generic)
@@ -23,12 +23,18 @@ impl Visitor for MonomorphizationPass {
             }
         }
 
-        // 3. Append all newly specialized functions to the program
+        // Traverse type definitions – their attribute initializers and method bodies
+        //    may also contain generic function calls.
+        for type_def in &mut program.types {
+            type_def.accept(self)?;
+        }
+
+        // Append all newly specialized functions to the program
         for (_, func) in self.specialized.drain() {
             program.functions.push(func);
         }
 
-        // 4. Remove the original generic definitions (they are no longer needed)
+        // Remove the original generic definitions (they are no longer needed)
         program.functions.retain(|f| !f.is_generic);
 
         Ok(())
@@ -132,6 +138,8 @@ impl Visitor for MonomorphizationPass {
     fn visit_bool(&mut self, _: &mut BoolExpr) -> Self::Result { Ok(()) }
     fn visit_const(&mut self, _: &mut ConstExpr) -> Self::Result { Ok(()) }
     fn visit_variable(&mut self, _: &mut VariableExpr) -> Self::Result { Ok(()) }
+    fn visit_self(&mut self, _: &mut SelfExpr) -> Self::Result { Ok(()) }
+    fn visit_base(&mut self, _: &mut BaseExpr) -> Self::Result { Ok(()) }
 
     fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
         expr.left.accept(self)?;
@@ -183,37 +191,47 @@ impl Visitor for MonomorphizationPass {
         Ok(())
     }
 
-    // Types (extend...)
-    fn visit_type_def(&mut self, _: &mut TypeDef) -> Self::Result {
-        todo!()
-    }
+    // Type‑related nodes 
 
-    fn visit_method_call(&mut self, expr: &mut MethodCallExpr)-> Self::Result {
-        todo!()
-    }
-
-    fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
-        todo!()
-    }
-
-    fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
-        todo!()
+    fn visit_type_def(&mut self, type_def: &mut TypeDef) -> Self::Result {
+        // Visit every attribute initializer
+        for attr in &mut type_def.attributes {
+            attr.accept(self)?;
+        }
+        // Visit every method body
+        for method in &mut type_def.methods {
+            method.accept(self)?;
+        }
+        Ok(())
     }
 
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
-        todo!()
+        attr.init_expr.accept(self)?;
+        Ok(())
+    }
+
+    fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
+        for arg in &mut expr.args {
+            arg.accept(self)?;
+        }
+        Ok(())
+    }
+
+    fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
+        expr.object.accept(self)?;
+        for arg in &mut expr.args {
+            arg.accept(self)?;
+        }
+        Ok(())
+    }
+
+    fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
+        expr.object.accept(self)?;
+        Ok(())
     }
 
     fn visit_method(&mut self, m: &mut Method) -> Self::Result {
-        todo!()
+        m.body.accept(self)?;
+        Ok(())
     }
-
-    fn visit_self(&mut self, _: &mut SelfExpr) -> Self::Result {
-        todo!()
-    }
-
-    fn visit_base(&mut self, _: &mut BaseExpr) -> Self::Result {
-        todo!()
-    }
-
 }
