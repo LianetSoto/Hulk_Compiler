@@ -6,6 +6,7 @@ use crate::semantic::types::HulkType;
 pub struct Params {
     pub name: String,
     pub ty: Option<HulkType>,   
+    pub ty_annotation: Option<HulkType>,
     pub span: Span
 }
 
@@ -16,6 +17,7 @@ pub struct FunctionDef {
     pub body: Box<Expr>,  // The body is always an expression (simple or block)
     pub span: Span,
     pub ty: Option<HulkType>,  // Return type
+    pub ty_annotation: Option<HulkType>, 
     pub is_generic: bool,
 }
 

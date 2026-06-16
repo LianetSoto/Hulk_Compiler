@@ -245,7 +245,7 @@ impl Node for VariableExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetExpr {
-    pub bindings: Vec<(String, Box<Expr>)>,
+    pub bindings: Vec<(String, Option<HulkType>,Box<Expr>)>,
     pub body: Box<Expr>,
     pub span: Span,
     pub ty: Option<HulkType>,
