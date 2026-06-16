@@ -167,9 +167,9 @@ impl MonomorphizationPass {
                 }
             }
             Expr::Let(let_expr) => {
-                for (_, init) in &mut let_expr.bindings {
-                    Self::substitute_in_expr(init, subst);
-                }
+                // for (_, init) in &mut let_expr.bindings {
+                //     Self::substitute_in_expr(init, subst);
+                // }
                 Self::substitute_in_expr(&mut let_expr.body, subst);
             }
             Expr::If(if_expr) => {

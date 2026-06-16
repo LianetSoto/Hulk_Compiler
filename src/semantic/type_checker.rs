@@ -1187,4 +1187,12 @@ impl Visitor for TypeChecker {
         self.add_type_error(format!("Attribute '{}' not found", expr.attribute), expr.span);
         HulkType::Error
     }
+    
+    fn visit_protocol_def(&mut self, proto: &mut ProtocolDef) -> Self::Result {
+        todo!()
+    }
+    
+    fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result {
+        todo!()
+    }
 }
