@@ -130,6 +130,10 @@ impl Lexer {
                     "new" => LexerToken::New,
                     
                     "range" => LexerToken::Range,
+                    "Number" => LexerToken::NumberType,
+                    "String" => LexerToken::StringType,
+                    "Boolean" => LexerToken::BooleanType,
+                    "Object" => LexerToken::ObjectType,
                     _ => LexerToken::Identifier(token_value),
                 };
                 tokens.push((start, lexer_token, i));
