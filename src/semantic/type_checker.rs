@@ -323,10 +323,71 @@ impl TypeChecker {
                 }
                 resolve_expr(&self.unifier, &mut method.body);
             }
+            // Después de resolver atributos y métodos, resolver param_types
+            type_def.param_types = type_def.param_types.iter()
+                .map(|t| self.unifier.resolve(t))
+                .collect();
         }
 
         // Resolver la expresión principal
         resolve_expr(&self.unifier, &mut program.main_expr);
+    }
+
+
+    pub fn verify_no_type_vars(&self, program: &Program) -> Result<(), Vec<CompilerError>> {
+        let mut errors = Vec::new();
+
+        // Función auxiliar para verificar un tipo y añadir error si es Var
+        fn check_type(ty: &Option<HulkType>, span: Span, name: &str, errors: &mut Vec<CompilerError>) {
+            if let Some(HulkType::Var(id)) = ty {
+                errors.push(CompilerError::TypeError {
+                    msg: format!(
+                        "Type of {} could not be inferred. Please provide an explicit type annotation (e.g., x: Number",
+                        name
+                    ),
+                    span,
+                });
+            }
+        }
+
+        // Recorrer todas las definiciones de tipos
+        for type_def in &program.types {
+            let type_name = &type_def.name;
+
+            // Verificar parámetros formales del tipo
+            for (i, param_ty) in type_def.param_types.iter().enumerate() {
+                if let HulkType::Var(id) = param_ty {
+                    errors.push(CompilerError::TypeError {
+                        msg: format!(
+                            "Parameter '{}' of type '{}' could not be inferred (Var({})). Please add an explicit type annotation.",
+                            type_def.params.get(i).unwrap_or(&"?".to_string()),
+                            type_name,
+                            id
+                        ),
+                        span: type_def.span,
+                    });
+                }
+            }
+
+            // Verificar atributos
+            for attr in &type_def.attributes {
+                check_type(&attr.ty, attr.span, &format!("attribute '{}' of type '{}'", attr.name, type_name), &mut errors);
+            }
+
+            // Verificar métodos
+            for method in &type_def.methods {
+                check_type(&method.ty, method.span, &format!("return type of method '{}' in type '{}'", method.name, type_name), &mut errors);
+                for param in &method.params {
+                    check_type(&param.ty, param.span, &format!("parameter '{}' of method '{}' in type '{}'", param.name, method.name, type_name), &mut errors);
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 

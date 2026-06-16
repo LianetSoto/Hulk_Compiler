@@ -116,6 +116,14 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
     }
 
+    // Verificar que no queden variables de tipo sin resolver en las definiciones de tipos
+    if let Err(errors) = type_checker.verify_no_type_vars(&ast) {
+        for err in errors {
+            report_error(&err, &source_map, filename);
+        }
+        process::exit(1);
+    }
+
     // 3. Monomorphization (AST → AST without generics)
     let mut mono_pass = MonomorphizationPass::new();
     if let Err(err) = mono_pass.run(&mut ast) {
