@@ -31,30 +31,30 @@ extern {
         "string" => Token::Str(<String>),
         "let"    => Token::Let,
         "in"     => Token::In,
-        "@" => Token::Concat,
-        "@@" => Token::ConcatSpace,
-        "PI" => Token::Pi,
-        "E" => Token::E,
-        "true"  => Token::True,
-        "false" => Token::False,
-        "&"  => Token::And,
-        "|"  => Token::Or,
-        "!"  => Token::Not,
-        "==" => Token::EqEq,
-        "!=" => Token::Neq,
-        "<"  => Token::Lt,
-        ">"  => Token::Gt,
-        "<=" => Token::Leq,
-        ">=" => Token::Geq,
-        "="  => Token::Eq,
-        ":=" => Token::Assign,
+        "@"      => Token::Concat,
+        "@@"     => Token::ConcatSpace,
+        "PI"     => Token::Pi,
+        "E"      => Token::E,
+        "true"   => Token::True,
+        "false"  => Token::False,
+        "&"      => Token::And,
+        "|"      => Token::Or,
+        "!"      => Token::Not,
+        "=="     => Token::EqEq,
+        "!="     => Token::Neq,
+        "<"      => Token::Lt,
+        ">"      => Token::Gt,
+        "<="     => Token::Leq,
+        ">="     => Token::Geq,
+        "="      => Token::Eq,
+        ":="     => Token::Assign,
         "if"     => Token::If,
         "else"   => Token::Else,
         "elif"   => Token::Elif,
         "while"  => Token::While,
         "for"    => Token::For,
         "function" => Token::Function,
-        "=>" => Token::Arrow,
+        "=>"     => Token::Arrow,
         "type"   => Token::Type,
         "inherits" => Token::Inherits,
         "base"   => Token::BaseKeyword,
@@ -63,7 +63,9 @@ extern {
         "String" => Token::StringType,
         "Boolean"=> Token::BooleanType,
         "Object" => Token::ObjectType,
-        "range" => Token::Range,
+        "range"  => Token::Range,
+        "protocol" => Token::Protocol,
+        "extends"  => Token::Extends,
     }
 }
 
@@ -247,12 +249,63 @@ TypeDef: TypeDef = {
     }
 };
 
+// Protocols
+ProtocolMethod: ProtocolMethod = {
+    <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> ";" <end:@R> => {
+        ProtocolMethod {
+            name,
+            params,
+            return_ty: ret_ann,
+            span: Span::new(start, end),
+        }
+    }
+};
+
+ProtocolMethods: Vec<ProtocolMethod> = {
+    <mut v:(<ProtocolMethod>)*> => v
+};
+
+ExtendsClause: Option<String> = {
+    "extends" <id:"identifier"> => Some(id),
+    => None,
+};
+
+ProtocolDef: ProtocolDef = {
+    <start:@L> "protocol" <name:"identifier"> <extends:ExtendsClause>
+    "{" <methods:ProtocolMethods> "}" <end:@R> => {
+        ProtocolDef {
+            name,
+            extends,
+            methods,
+            span: Span::new(start, end),
+            ty: None,
+        }
+    }
+};
+
+TopLevel: TopLevel = {
+    <t:TypeDef> => TopLevel::Type(t),
+    <p:ProtocolDef> => TopLevel::Protocol(p),
+    <f:FunctionDef> => TopLevel::Function(f),
+};
+
 pub Program: Box<Program> = {
-    <start:@L> <types:TypeDef*> <funcs:FunctionDef*> <main_expr:Expr> <end:@R> => {
+    <start:@L> <items:TopLevel*> <main_expr:Expr> <end:@R> => {
+        let mut types = vec![];
+        let mut protocols = vec![];
+        let mut functions = vec![];
+        for item in items {
+            match item {
+                TopLevel::Type(t) => types.push(t),
+                TopLevel::Protocol(p) => protocols.push(p),
+                TopLevel::Function(f) => functions.push(f),
+            }
+        }
         Box::new(Program {
-            types: types,
-            functions: funcs,
-            main_expr: main_expr,
+            types,
+            protocols,
+            functions,
+            main_expr,
             span: Span::new(start, end),
         })
     }
