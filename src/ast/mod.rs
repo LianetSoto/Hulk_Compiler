@@ -12,4 +12,12 @@ pub use expr::{BinOp, BinaryOpExpr, Expr, NumberExpr, StringExpr, CallExpr, Cons
 pub use function::{FunctionDef, Params};
 pub use visitor::Visitor;
 pub use printer::PrettyPrinter;
-pub use type_def::{TypeDef, Attribute, Method, TypeMember, MethodParam, Parent};
+pub use type_def::{TypeDef, Attribute, Method, TypeMember, MethodParam, Parent, ProtocolDef, ProtocolMethod};
+
+// Add this enum
+#[derive(Debug, Clone, PartialEq)]
+pub enum TopLevel {
+    Type(TypeDef),
+    Protocol(ProtocolDef),
+    Function(FunctionDef),
+}

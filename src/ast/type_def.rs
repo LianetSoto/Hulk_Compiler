@@ -72,3 +72,32 @@ pub struct Parent {
     pub span: Span,
     pub ty: Option<HulkType>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtocolMethod {
+    pub name: String,
+    pub params: Vec<MethodParam>,
+    pub return_ty: Option<HulkType>,
+    pub span: Span,
+}
+
+impl Node for ProtocolMethod {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_protocol_method(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtocolDef {
+    pub name: String,
+    pub extends: Option<String>,
+    pub methods: Vec<ProtocolMethod>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for ProtocolDef {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_protocol_def(self)
+    }
+}

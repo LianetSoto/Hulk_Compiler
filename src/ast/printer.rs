@@ -45,6 +45,11 @@ impl Visitor for PrettyPrinter {
         self.write_line("Program {");
         self.indent += 1;
 
+        // Print protocols
+        for proto in &mut program.protocols {
+            proto.accept(self);
+        }
+
         // Print types
         for ty in &mut program.types {
             ty.accept(self);
@@ -385,5 +390,42 @@ impl Visitor for PrettyPrinter {
         self.write_line(&format!("attribute: '{}'", e.attribute));
         self.indent -= 1;
         self.write_line("}");
+    }
+
+    fn visit_protocol_def(&mut self, proto: &mut ProtocolDef) -> Self::Result {
+        let extends_str = match &proto.extends {
+            Some(parent) => format!(" extends {}", parent),
+            None => String::new(),
+        };
+        self.write_line(&format!("ProtocolDef {{ name: '{}'{}", proto.name, extends_str));
+        self.indent += 1;
+        if !proto.methods.is_empty() {
+            self.write_line("methods: [");
+            self.indent += 1;
+            for m in &mut proto.methods {
+                m.accept(self);
+            }
+            self.indent -= 1;
+            self.write_line("]");
+        }
+        self.indent -= 1;
+        self.write_line("}");
+    }
+
+    fn visit_protocol_method(&mut self, m: &mut ProtocolMethod) -> Self::Result {
+        let params_str: Vec<String> = m.params.iter()
+            .map(|p| {
+                let ann = match &p.ty_annotation {
+                    Some(ty) => format!(": {:?}", ty),
+                    None => String::new(),
+                };
+                format!("{}{}", p.name, ann)
+            })
+            .collect();
+        let ret_str = match &m.return_ty {
+            Some(ty) => format!(": {:?}", ty),
+            None => String::new(),
+        };
+        self.write_line(&format!("ProtocolMethod {{ {}({}){} }}", m.name, params_str.join(", "), ret_str));
     }
 }

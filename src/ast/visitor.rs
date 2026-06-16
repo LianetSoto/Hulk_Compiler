@@ -28,4 +28,6 @@ pub trait Visitor {
     fn visit_self(&mut self, e: &mut SelfExpr) -> Self::Result;
     fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result;
     fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result;
+    fn visit_protocol_def(&mut self, proto: &mut ProtocolDef) -> Self::Result;
+    fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result;
 }
