@@ -1,0 +1,16 @@
+protocol Hashable {
+    hash(): Number;
+}
+
+protocol Equatable extends Hashable {
+    equals(other: Object): Boolean;
+}
+
+type Point {
+    x = 0;
+    y = 0;
+    hash(): Number => self.x ^ self.y;
+    equals(other: Object): Boolean => false;
+}
+
+let p: Hashable = new Point() in print(p.hash())
