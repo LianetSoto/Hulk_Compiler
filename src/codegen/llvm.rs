@@ -4,7 +4,7 @@ use inkwell::builder::Builder;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use std::collections::HashMap;
 use crate::semantic::HulkType;
-use crate::ast::{Program, Node, Expr};
+use crate::ast::{Program, Node, Expr, TypeDef};
 use crate::error::{CompilerError};
 use inkwell::types::{StructType, BasicTypeEnum};
 
@@ -16,6 +16,7 @@ pub struct LlvmCodeGen<'ctx> {
     pub(crate) current_function: Option<FunctionValue<'ctx>>,
     pub(crate) user_functions: HashMap<String, FunctionValue<'ctx>>, 
     pub(crate) type_structs: HashMap<String, StructType<'ctx>>,
+    pub(crate) type_defs: HashMap<String, TypeDef>,
 }
 
 impl<'ctx> LlvmCodeGen<'ctx> {
@@ -33,6 +34,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             current_function: None,
             user_functions: HashMap::new(),
             type_structs: HashMap::new(),
+            type_defs: HashMap::new(),
         }
     }
 
@@ -130,7 +132,8 @@ impl<'ctx> LlvmCodeGen<'ctx> {
 
             // --- Attribute access (e.g. self.x, obj.field) ---
             Expr::AttributeAccess(attr) => {
-                todo!()
+                let (ptr, _) = self.get_attribute_ptr(attr)?;
+                Ok(ptr)
             }
 
             // --- Anything else is not assignable (should be caught by TypeChecker) ---
