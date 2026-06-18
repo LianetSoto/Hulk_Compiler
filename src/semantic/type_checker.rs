@@ -29,6 +29,22 @@ struct MethodInfo {
     return_type: HulkType,
 }
 
+#[derive(Clone)]
+struct FlattenedMethod {
+    pub method: Method,              // Copia del método (con su cuerpo)
+    pub vtable_index: usize,         // Índice en la VTable
+    pub base_target: Option<String>, // Nombre LLVM del método del padre si usa base()
+}
+
+#[derive(Clone, Default)]
+struct FlattenedType {
+    pub attributes: Vec<Attribute>,       // Atributos en orden (padre → hijo)
+    pub methods: Vec<FlattenedMethod>,    // Métodos efectivos (con índices VTable)
+    pub parent_name: Option<String>,      // Nombre del padre directo
+    pub params: Vec<(String, HulkType)>,  // Parámetros efectivos (nombre, tipo)
+    pub parent_init_args: Option<Vec<Box<Expr>>>, // Argumentos para el constructor padre (si el hijo tiene params propios)
+}
+
 pub struct TypeChecker {
     errors: Vec<CompilerError>,
     scopes: Vec<HashMap<String, HulkType>>,
@@ -39,13 +55,15 @@ pub struct TypeChecker {
     types: HashMap<String, TypeInfo>,          // nombre -> info del tipo
     current_type: Option<String>,               // tipo que se está chequeando
     self_type: Option<HulkType>,
+    flattened_types: HashMap<String, FlattenedType>,
+    type_defs: HashMap<String, TypeDef>,
 }
 
 impl TypeChecker {
     pub fn new() -> Self {
         let mut scopes = Vec::new();
         scopes.push(HashMap::new()); // Scope global
-        Self {
+        let mut tc = Self {
             errors: Vec::new(),
             scopes,
             functions: HashMap::new(),
@@ -55,39 +73,16 @@ impl TypeChecker {
             types: HashMap::new(),
             current_type: None,
             self_type: None,
-        }
+            flattened_types: HashMap::new(),
+            type_defs: HashMap::new(),
+        };
+        tc.register_builtin_types();
+        tc
     }
 
     pub fn check(&mut self, program: &mut Program) -> Result<(), Vec<CompilerError>> {
         
-        // 0. Procesar tipos (TypeDef) primero
-        for type_def in &mut program.types {
-            type_def.accept(self);
-        }
-        
-        // 1. Registrar nombres de funciones y crear variables de tipo para parámetros y retorno
-        for func in &program.functions {
-            self.functions.insert(func.name.clone(), FunctionInfo {
-                params_len: func.params.len(),
-                return_type: None,
-                param_types: None,// lo llenaremos después de inferir
-                is_generic: false,
-            });
-        }
-        self.prepare_function_vars(program);
-
-        // 2. Inferir tipos función por función (esto visita los cuerpos)
-        // Las funciones generarán variables de tipo que se vincularán durante las llamadas
-        for func in &mut program.functions {
-            func.accept(self);
-            // Los tipos ya están guardados en self.functions sin resolver
-        }
-
-        // 3. Verificar la expresión principal (main_expr)
-        // Aquí se hacen las llamadas, que vinculan las variables de tipo
-        program.main_expr.accept(self);
-
-
+        self.visit_program(program);
         if self.errors.is_empty() {
             Ok(())
         } else {
@@ -95,300 +90,563 @@ impl TypeChecker {
         }
     }
 
-    fn is_assignable(&mut self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Variable(_) => true,          // asignación a variable local
-            Expr::AttributeAccess(attr) => true, // asignación a atributo (self.x, obj.y)
-            // Puedes extender a accesos a vectores, etc.
-            _ => false,
-        }
-    }
+    
 
-    fn add_type_error(&mut self, msg: String, span: Span) {
-        self.errors.push(CompilerError::TypeError { msg, span });
-    }
-
-    /// Crea un nuevo scope (ámbito de variables)
-    fn enter_scope(&mut self) {
-        self.scopes.push(HashMap::new());
-    }
-
-    /// Sale del scope actual
-    fn exit_scope(&mut self) {
-        if self.scopes.len() > 1 {
-            self.scopes.pop();
-        }
-    }
-
-    /// Declara una variable en el scope actual
-    fn declare_var(&mut self, name: String, ty: HulkType) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, ty);
-        }
-    }
-
-    /// Busca una variable en los scopes (desde el más interno al global)
-    fn lookup_var(&self, name: &str) -> Option<HulkType> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(ty.clone());
-            }
-        }
-        None
-    }
-
-    fn prepare_function_vars(&mut self, program: &Program) {
-        for func in &program.functions {
-            let mut param_vars = Vec::new();
-            for _ in &func.params {
-                param_vars.push(self.unifier.new_var());
-            }
-            let ret_var = self.unifier.new_var();
-
-            // Guardar en los mapas auxiliares (ya los tienes)
-            self.param_vars.insert(func.name.clone(), param_vars.clone());
-            self.return_var.insert(func.name.clone(), ret_var.clone());
-
-            // IMPORTANTE: actualizar self.functions con estas variables
-            if let Some(info) = self.functions.get_mut(&func.name) {
-                info.param_types = Some(param_vars);
-                info.return_type = Some(ret_var);
-            }
-        }
-    }
-
-    pub fn resolve_ast(&mut self, program: &mut Program) {
-        // Función recursiva para resolver tipos en una expresión
-        fn resolve_expr(unifier: &Unifier, expr: &mut Expr) {
-            match expr {
-                Expr::Number(n) => {
-                    if let Some(ty) = &n.ty {
-                        n.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::BinaryOp(b) => {
-                    if let Some(ty) = &b.ty {
-                        b.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut b.left);
-                    resolve_expr(unifier, &mut b.right);
-                }
-                Expr::String(s) => {
-                    if let Some(ty) = &s.ty {
-                        s.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::Call(c) => {
-                    if let Some(ty) = &c.ty {
-                        c.ty = Some(unifier.resolve(ty));
-                    }
-                    for arg in &mut c.args {
-                        resolve_expr(unifier, arg);
-                    }
-                }
-                Expr::Const(c) => {
-                    if let Some(ty) = &c.ty {
-                        c.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::Bool(b) => {
-                    if let Some(ty) = &b.ty {
-                        b.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::UnaryOp(u) => {
-                    if let Some(ty) = &u.ty {
-                        u.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut u.expr);
-                }
-                Expr::Variable(v) => {
-                    if let Some(ty) = &v.ty {
-                        v.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::Let(l) => {
-                    if let Some(ty) = &l.ty {
-                        l.ty = Some(unifier.resolve(ty));
-                    }
-                    for (_, init) in &mut l.bindings {
-                        resolve_expr(unifier, init);
-                    }
-                    resolve_expr(unifier, &mut l.body);
-                }
-                Expr::DestructiveAssign(a) => {
-                    if let Some(ty) = &a.ty {
-                        a.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut a.lhs);
-                    resolve_expr(unifier, &mut a.value);
-                }
-                Expr::Block(b) => {
-                    if let Some(ty) = &b.ty {
-                        b.ty = Some(unifier.resolve(ty));
-                    }
-                    for e in &mut b.expressions {
-                        resolve_expr(unifier, e);
-                    }
-                }
-                Expr::If(i) => {
-                    if let Some(ty) = &i.ty {
-                        i.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut i.condition);
-                    resolve_expr(unifier, &mut i.then_branch);
-                    resolve_expr(unifier, &mut i.else_branch);
-                }
-                Expr::While(w) => {
-                    if let Some(ty) = &w.ty {
-                        w.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut w.condition);
-                    resolve_expr(unifier, &mut w.body);
-                }
-                Expr::New(n) => {
-                    if let Some(ty) = &n.ty {
-                        n.ty = Some(unifier.resolve(ty));
-                    }
-                    for arg in &mut n.args {
-                        resolve_expr(unifier, arg);
-                    }
-                }
-                Expr::MethodCall(m) => {
-                    if let Some(ty) = &m.ty {
-                        m.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut m.object);
-                    for arg in &mut m.args {
-                        resolve_expr(unifier, arg);
-                    }
-                }
-                Expr::SelfExpr(s) => {
-                    if let Some(ty) = &s.ty {
-                        s.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::Base(b) => {
-                    if let Some(ty) = &b.ty {
-                        b.ty = Some(unifier.resolve(ty));
-                    }
-                }
-                Expr::AttributeAccess(a) => {
-                    if let Some(ty) = &a.ty {
-                        a.ty = Some(unifier.resolve(ty));
-                    }
-                    resolve_expr(unifier, &mut a.object);
-                }
-            }
-        }
-
-        // Resolver tipos en funciones
-        for func in &mut program.functions {
-            if let Some(ty) = &func.ty {
-                func.ty = Some(self.unifier.resolve(ty));
-            }
-            for param in &mut func.params {
-                if let Some(ty) = &param.ty {
-                    param.ty = Some(self.unifier.resolve(ty));
-                }
-            }
-            resolve_expr(&self.unifier, &mut func.body);
-        }
-
-        // Resolver tipos en definiciones de tipos
-        for type_def in &mut program.types {
-            if let Some(ty) = &type_def.ty {
-                type_def.ty = Some(self.unifier.resolve(ty));
-            }
-            for attr in &mut type_def.attributes {
-                if let Some(ty) = &attr.ty {
-                    attr.ty = Some(self.unifier.resolve(ty));
-                }
-                if let Some(ann) = &attr.ty_annotation {
-                    attr.ty_annotation = Some(self.unifier.resolve(ann));
-                }
-                resolve_expr(&self.unifier, &mut attr.init_expr);
-            }
-            for method in &mut type_def.methods {
-                if let Some(ty) = &method.ty {
-                    method.ty = Some(self.unifier.resolve(ty));
-                }
-                for param in &mut method.params {
-                    if let Some(ty) = &param.ty {
-                        param.ty = Some(self.unifier.resolve(ty));
-                    }
-                    if let Some(ann) = &param.ty_annotation {
-                        param.ty_annotation = Some(self.unifier.resolve(ann));
-                    }
-                }
-                resolve_expr(&self.unifier, &mut method.body);
-            }
-            // Después de resolver atributos y métodos, resolver param_types
-            type_def.param_types = type_def.param_types.iter()
-                .map(|t| self.unifier.resolve(t))
-                .collect();
-        }
-
-        // Resolver la expresión principal
-        resolve_expr(&self.unifier, &mut program.main_expr);
-    }
-
-
-    pub fn verify_no_type_vars(&self, program: &Program) -> Result<(), Vec<CompilerError>> {
-        let mut errors = Vec::new();
-
-        // Función auxiliar para verificar un tipo y añadir error si es Var
-        fn check_type(ty: &Option<HulkType>, span: Span, name: &str, errors: &mut Vec<CompilerError>) {
-            if let Some(HulkType::Var(id)) = ty {
-                errors.push(CompilerError::TypeError {
-                    msg: format!(
-                        "Type of {} could not be inferred. Please provide an explicit type annotation (e.g., x: Number",
-                        name
-                    ),
-                    span,
+        fn register_builtin_types(&mut self) {
+            // Insertar Object en self.types
+            if !self.types.contains_key("Object") {
+                self.types.insert("Object".to_string(), TypeInfo {
+                    parent: None,
+                    param_vars: vec![],
+                    attributes: HashMap::new(),
+                    attr_order: vec![],
+                    methods: HashMap::new(),
+                });
+                // También insertar un TypeDef ficticio para Object
+                self.type_defs.insert("Object".to_string(), TypeDef {
+                    name: "Object".to_string(),
+                    params: vec![],
+                    param_types: vec![],
+                    parent: None,
+                    attributes: vec![],
+                    methods: vec![],
+                    span: Span::new(0, 0),
+                    ty: None,
                 });
             }
         }
 
-        // Recorrer todas las definiciones de tipos
-        for type_def in &program.types {
-            let type_name = &type_def.name;
+        fn is_assignable(&mut self, expr: &Expr) -> bool {
+            match expr {
+                Expr::Variable(_) => true,          // asignación a variable local
+                Expr::AttributeAccess(attr) => true, // asignación a atributo (self.x, obj.y)
+                // Puedes extender a accesos a vectores, etc.
+                _ => false,
+            }
+        }
 
-            // Verificar parámetros formales del tipo
-            for (i, param_ty) in type_def.param_types.iter().enumerate() {
-                if let HulkType::Var(id) = param_ty {
+        fn add_type_error(&mut self, msg: String, span: Span) {
+            self.errors.push(CompilerError::TypeError { msg, span });
+        }
+
+        /// Crea un nuevo scope (ámbito de variables)
+        fn enter_scope(&mut self) {
+            self.scopes.push(HashMap::new());
+        }
+
+        /// Sale del scope actual
+        fn exit_scope(&mut self) {
+            if self.scopes.len() > 1 {
+                self.scopes.pop();
+            }
+        }
+
+        /// Declara una variable en el scope actual
+        fn declare_var(&mut self, name: String, ty: HulkType) {
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name, ty);
+            }
+        }
+
+        /// Busca una variable en los scopes (desde el más interno al global)
+        fn lookup_var(&self, name: &str) -> Option<HulkType> {
+            for scope in self.scopes.iter().rev() {
+                if let Some(ty) = scope.get(name) {
+                    return Some(ty.clone());
+                }
+            }
+            None
+        }
+
+        fn prepare_function_vars(&mut self, program: &Program) {
+            for func in &program.functions {
+                let mut param_vars = Vec::new();
+                for _ in &func.params {
+                    param_vars.push(self.unifier.new_var());
+                }
+                let ret_var = self.unifier.new_var();
+
+                // Guardar en los mapas auxiliares (ya los tienes)
+                self.param_vars.insert(func.name.clone(), param_vars.clone());
+                self.return_var.insert(func.name.clone(), ret_var.clone());
+
+                // IMPORTANTE: actualizar self.functions con estas variables
+                if let Some(info) = self.functions.get_mut(&func.name) {
+                    info.param_types = Some(param_vars);
+                    info.return_type = Some(ret_var);
+                }
+            }
+        }
+
+        pub fn resolve_ast(&mut self, program: &mut Program) {
+            // Función recursiva para resolver tipos en una expresión
+            fn resolve_expr(unifier: &Unifier, expr: &mut Expr) {
+                match expr {
+                    Expr::Number(n) => {
+                        if let Some(ty) = &n.ty {
+                            n.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::BinaryOp(b) => {
+                        if let Some(ty) = &b.ty {
+                            b.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut b.left);
+                        resolve_expr(unifier, &mut b.right);
+                    }
+                    Expr::String(s) => {
+                        if let Some(ty) = &s.ty {
+                            s.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::Call(c) => {
+                        if let Some(ty) = &c.ty {
+                            c.ty = Some(unifier.resolve(ty));
+                        }
+                        for arg in &mut c.args {
+                            resolve_expr(unifier, arg);
+                        }
+                    }
+                    Expr::Const(c) => {
+                        if let Some(ty) = &c.ty {
+                            c.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::Bool(b) => {
+                        if let Some(ty) = &b.ty {
+                            b.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::UnaryOp(u) => {
+                        if let Some(ty) = &u.ty {
+                            u.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut u.expr);
+                    }
+                    Expr::Variable(v) => {
+                        if let Some(ty) = &v.ty {
+                            v.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::Let(l) => {
+                        if let Some(ty) = &l.ty {
+                            l.ty = Some(unifier.resolve(ty));
+                        }
+                        for (_, _, init) in &mut l.bindings {
+                            resolve_expr(unifier, init);
+                        }
+                        resolve_expr(unifier, &mut l.body);
+                    }
+                    Expr::DestructiveAssign(a) => {
+                        if let Some(ty) = &a.ty {
+                            a.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut a.lhs);
+                        resolve_expr(unifier, &mut a.value);
+                    }
+                    Expr::Block(b) => {
+                        if let Some(ty) = &b.ty {
+                            b.ty = Some(unifier.resolve(ty));
+                        }
+                        for e in &mut b.expressions {
+                            resolve_expr(unifier, e);
+                        }
+                    }
+                    Expr::If(i) => {
+                        if let Some(ty) = &i.ty {
+                            i.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut i.condition);
+                        resolve_expr(unifier, &mut i.then_branch);
+                        resolve_expr(unifier, &mut i.else_branch);
+                    }
+                    Expr::While(w) => {
+                        if let Some(ty) = &w.ty {
+                            w.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut w.condition);
+                        resolve_expr(unifier, &mut w.body);
+                    }
+                    Expr::New(n) => {
+                        if let Some(ty) = &n.ty {
+                            n.ty = Some(unifier.resolve(ty));
+                        }
+                        for arg in &mut n.args {
+                            resolve_expr(unifier, arg);
+                        }
+                    }
+                    Expr::MethodCall(m) => {
+                        if let Some(ty) = &m.ty {
+                            m.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut m.object);
+                        for arg in &mut m.args {
+                            resolve_expr(unifier, arg);
+                        }
+                    }
+                    Expr::SelfExpr(s) => {
+                        if let Some(ty) = &s.ty {
+                            s.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::Base(b) => {
+                        if let Some(ty) = &b.ty {
+                            b.ty = Some(unifier.resolve(ty));
+                        }
+                    }
+                    Expr::AttributeAccess(a) => {
+                        if let Some(ty) = &a.ty {
+                            a.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut a.object);
+                    }
+                }
+            }
+
+            // Resolver tipos en funciones
+            for func in &mut program.functions {
+                if let Some(ty) = &func.ty {
+                    func.ty = Some(self.unifier.resolve(ty));
+                }
+                for param in &mut func.params {
+                    if let Some(ty) = &param.ty {
+                        param.ty = Some(self.unifier.resolve(ty));
+                    }
+                }
+                resolve_expr(&self.unifier, &mut func.body);
+            }
+
+            // Resolver tipos en definiciones de tipos
+            for type_def in &mut program.types {
+                if let Some(ty) = &type_def.ty {
+                    type_def.ty = Some(self.unifier.resolve(ty));
+                }
+                for attr in &mut type_def.attributes {
+                    if let Some(ty) = &attr.ty {
+                        attr.ty = Some(self.unifier.resolve(ty));
+                    }
+                    if let Some(ann) = &attr.ty_annotation {
+                        attr.ty_annotation = Some(self.unifier.resolve(ann));
+                    }
+                    resolve_expr(&self.unifier, &mut attr.init_expr);
+                }
+                for method in &mut type_def.methods {
+                    if let Some(ty) = &method.ty {
+                        method.ty = Some(self.unifier.resolve(ty));
+                    }
+                    for param in &mut method.params {
+                        if let Some(ty) = &param.ty {
+                            param.ty = Some(self.unifier.resolve(ty));
+                        }
+                        if let Some(ann) = &param.ty_annotation {
+                            param.ty_annotation = Some(self.unifier.resolve(ann));
+                        }
+                    }
+                    resolve_expr(&self.unifier, &mut method.body);
+                }
+                // Después de resolver atributos y métodos, resolver param_types
+                type_def.param_types = type_def.param_types.iter()
+                    .map(|t| self.unifier.resolve(t))
+                    .collect();
+            }
+
+            // Resolver la expresión principal
+            resolve_expr(&self.unifier, &mut program.main_expr);
+        }
+
+
+        pub fn verify_no_type_vars(&self, program: &Program) -> Result<(), Vec<CompilerError>> {
+            let mut errors = Vec::new();
+
+            // Función auxiliar para verificar un tipo y añadir error si es Var
+            fn check_type(ty: &Option<HulkType>, span: Span, name: &str, errors: &mut Vec<CompilerError>) {
+                if let Some(HulkType::Var(id)) = ty {
                     errors.push(CompilerError::TypeError {
                         msg: format!(
-                            "Parameter '{}' of type '{}' could not be inferred (Var({})). Please add an explicit type annotation.",
-                            type_def.params.get(i).unwrap_or(&"?".to_string()),
-                            type_name,
-                            id
+                            "Type of {} could not be inferred. Please provide an explicit type annotation (e.g., x: Number",
+                            name
                         ),
-                        span: type_def.span,
+                        span,
                     });
                 }
             }
 
-            // Verificar atributos
-            for attr in &type_def.attributes {
-                check_type(&attr.ty, attr.span, &format!("attribute '{}' of type '{}'", attr.name, type_name), &mut errors);
+            // Recorrer todas las definiciones de tipos
+            for type_def in &program.types {
+                let type_name = &type_def.name;
+
+                // Verificar parámetros formales del tipo
+                for (i, param_ty) in type_def.param_types.iter().enumerate() {
+                    if let HulkType::Var(id) = param_ty {
+                        errors.push(CompilerError::TypeError {
+                            msg: format!(
+                                "Parameter '{}' of type '{}' could not be inferred (Var({})). Please add an explicit type annotation.",
+                                type_def.params.get(i).unwrap_or(&"?".to_string()),
+                                type_name,
+                                id
+                            ),
+                            span: type_def.span,
+                        });
+                    }
+                }
+
+                // Verificar atributos
+                for attr in &type_def.attributes {
+                    check_type(&attr.ty, attr.span, &format!("attribute '{}' of type '{}'", attr.name, type_name), &mut errors);
+                }
+
+                // Verificar métodos
+                for method in &type_def.methods {
+                    check_type(&method.ty, method.span, &format!("return type of method '{}' in type '{}'", method.name, type_name), &mut errors);
+                    for param in &method.params {
+                        check_type(&param.ty, param.span, &format!("parameter '{}' of method '{}' in type '{}'", param.name, method.name, type_name), &mut errors);
+                    }
+                }
             }
 
-            // Verificar métodos
-            for method in &type_def.methods {
-                check_type(&method.ty, method.span, &format!("return type of method '{}' in type '{}'", method.name, type_name), &mut errors);
-                for param in &method.params {
-                    check_type(&param.ty, param.span, &format!("parameter '{}' of method '{}' in type '{}'", param.name, method.name, type_name), &mut errors);
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors)
+            }
+        }
+
+        pub fn flatten_all_types(&mut self) {
+            // Primero, asegurar que Object está aplanado (base)
+            self.flatten_type("Object");
+
+            // Luego aplanar todos los tipos definidos por el usuario
+            let type_names: Vec<String> = self.types.keys().cloned().collect();
+            for name in type_names {
+                if name != "Object" {
+                    self.flatten_type(&name);
                 }
             }
         }
 
-        if errors.is_empty() {
-            Ok(())
+        fn flatten_type(&mut self, type_name: &str) -> FlattenedType {
+        // Si ya está aplanado, devolver una copia
+        if let Some(flattened) = self.flattened_types.get(type_name) {
+            return flattened.clone();
+        }
+
+        // Clonar TypeInfo para no mantener préstamos
+        let type_info = self.types.get(type_name)
+            .expect("TypeInfo not found")
+            .clone();
+        let parent_name = type_info.parent.clone();
+
+        // Aplanar recursivamente el padre (esto puede mutar self)
+        let parent_flattened = if let Some(ref pname) = parent_name {
+            self.flatten_type(pname)
         } else {
-            Err(errors)
+            FlattenedType::default()
+        };
+
+        // Clonar el TypeDef original (solo lectura)
+        let type_def = self.type_defs.get(type_name)
+            .expect("TypeDef not found")
+            .clone();
+
+        // --- Atributos: heredados + propios (sin duplicados) ---
+        let mut attributes = parent_flattened.attributes.clone();
+        for attr in &type_def.attributes {
+            if attributes.iter().any(|a| a.name == attr.name) {
+                self.add_type_error(
+                    format!("Attribute '{}' already defined in parent", attr.name),
+                    attr.span,
+                );
+            } else {
+                attributes.push(attr.clone());
+            }
+        }
+
+        // --- Métodos y VTable ---
+        let mut methods = parent_flattened.methods.clone();
+        let mut max_index = methods.iter()
+            .map(|m| m.vtable_index)
+            .max()
+            .unwrap_or(0);
+
+        for method in &type_def.methods {
+            // Detectar si el método usa base()
+            let mut detector = BaseDetector { found: false };
+            // Clonar el cuerpo para poder llamar a accept con mutabilidad
+            let mut body_clone = method.body.clone();
+            body_clone.accept(&mut detector);
+            let base_target = if detector.found {
+                Some(format!("{}.{}", parent_name.as_deref().unwrap_or("Object"), method.name))
+            } else {
+                None
+            };
+
+            // Buscar si ya existe un método con mismo nombre y número de parámetros
+            if let Some(existing_pos) = methods.iter().position(|m| {
+                m.method.name == method.name && m.method.params.len() == method.params.len()
+            }) {
+                // Sobrescritura: reemplazar manteniendo el índice
+                let old_index = methods[existing_pos].vtable_index;
+                methods[existing_pos] = FlattenedMethod {
+                    method: method.clone(),
+                    vtable_index: old_index,
+                    base_target,
+                };
+            } else {
+                // Nuevo método: asignar nuevo índice
+                max_index += 1;
+                methods.push(FlattenedMethod {
+                    method: method.clone(),
+                    vtable_index: max_index,
+                    base_target,
+                });
+            }
+        }
+
+        // --- Parámetros efectivos y argumentos para el constructor padre ---
+        let (params, mut parent_init_args) = if type_def.params.is_empty() {
+            // Sin parámetros propios → heredar los del padre
+            (parent_flattened.params.clone(), None)
+        } else {
+            // Con parámetros propios → son los efectivos
+            let own_params: Vec<(String, HulkType)> = type_def.params
+                .iter()
+                .zip(type_def.param_types.iter())
+                .map(|(name, ty)| (name.clone(), ty.clone()))
+                .collect();
+            let args = type_def.parent.as_ref().and_then(|p| {
+                if p.args.is_empty() { None } else { Some(p.args.clone()) }
+            });
+            (own_params, args)
+        };
+
+        // Verificar que los argumentos del constructor padre coincidan en número y tipo
+        if let Some(args) = &mut parent_init_args {
+            if let Some(ref pname) = parent_name {
+                // Clonar los parámetros del padre para no mantener préstamo
+                let parent_params = self.flattened_types
+                    .get(pname)
+                    .expect("Parent not flattened")
+                    .params
+                    .clone();
+
+                if args.len() != parent_params.len() {
+                    self.add_type_error(
+                        format!("Parent constructor expects {} arguments, got {}", parent_params.len(), args.len()),
+                        type_def.span,
+                    );
+                } else {
+                    // Unificar tipos de cada argumento con el parámetro correspondiente
+                    for (arg, (_, param_ty)) in args.iter_mut().zip(parent_params.iter()) {
+                        let arg_ty = arg.accept(self);
+                        if let Err(msg) = self.unifier.unify(&arg_ty, param_ty) {
+                            self.add_type_error(msg, arg.span());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Construir el objeto aplanado
+        let flattened = FlattenedType {
+            attributes,
+            methods,
+            parent_name: parent_name.clone(),
+            params,
+            parent_init_args,
+        };
+
+        // Guardar en el mapa
+        self.flattened_types.insert(type_name.to_string(), flattened.clone());
+        flattened
+    }
+
+
+    pub fn get_type_def(&self, name: &str) -> Option<&TypeDef> {
+        self.type_defs.get(name)
+    }}
+
+
+struct BaseDetector {
+    found: bool,
+}
+
+impl Visitor for BaseDetector {
+    type Result = ();
+
+    fn visit_program(&mut self, _: &mut Program) -> Self::Result {}
+    fn visit_function_def(&mut self, _: &mut FunctionDef) -> Self::Result {}
+    fn visit_number(&mut self, _: &mut NumberExpr) -> Self::Result {}
+    fn visit_binary_op(&mut self, expr: &mut BinaryOpExpr) -> Self::Result {
+        expr.left.accept(self);
+        expr.right.accept(self);
+    }
+    fn visit_string(&mut self, _: &mut StringExpr) -> Self::Result {}
+    fn visit_call(&mut self, expr: &mut CallExpr) -> Self::Result {
+        for arg in &mut expr.args {
+            arg.accept(self);
         }
     }
+    fn visit_const(&mut self, _: &mut ConstExpr) -> Self::Result {}
+    fn visit_bool(&mut self, _: &mut BoolExpr) -> Self::Result {}
+    fn visit_unary_op(&mut self, expr: &mut UnaryOpExpr) -> Self::Result {
+        expr.expr.accept(self);
+    }
+    fn visit_variable(&mut self, _: &mut VariableExpr) -> Self::Result {}
+    fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
+        for (_, _, init) in &mut expr.bindings {
+            init.accept(self);
+        }
+        expr.body.accept(self);
+    }
+    fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> Self::Result {
+        expr.lhs.accept(self);
+        expr.value.accept(self);
+    }
+    fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
+        for e in &mut expr.expressions {
+            e.accept(self);
+        }
+    }
+    fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
+        expr.condition.accept(self);
+        expr.then_branch.accept(self);
+        expr.else_branch.accept(self);
+    }
+    fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result {
+        expr.condition.accept(self);
+        expr.body.accept(self);
+    }
+    fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
+        for arg in &mut expr.args {
+            arg.accept(self);
+        }
+    }
+    fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
+        // Detectar si el objeto es `base`
+        if let Expr::Base(_) = &*expr.object {
+            self.found = true;
+        }
+        expr.object.accept(self);
+        for arg in &mut expr.args {
+            arg.accept(self);
+        }
+    }
+    fn visit_self(&mut self, _: &mut SelfExpr) -> Self::Result {}
+    fn visit_base(&mut self, _: &mut BaseExpr) -> Self::Result {
+        self.found = true;
+    }
+    fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
+        expr.object.accept(self);
+    }
+    // Los métodos de protocolo no son necesarios para este visitor
+    
+        fn visit_type_def(&mut self, _ty: &mut TypeDef) -> Self::Result {}
+    fn visit_attribute(&mut self, _attr: &mut Attribute) -> Self::Result {}
+    fn visit_method(&mut self, _m: &mut Method) -> Self::Result {}
+
+    // Asegúrate de que también tengas los de protocolo (ya los tenías)
+    fn visit_protocol_def(&mut self, _proto: &mut ProtocolDef) -> Self::Result {}
+    fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {}
 }
 
 impl Visitor for TypeChecker {
@@ -396,11 +654,14 @@ impl Visitor for TypeChecker {
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
 
+        self.register_builtin_types();
         // PASO 2: Procesar cada tipo (atributos y métodos) con el contexto adecuado
-        for type_def in &mut program.types {
-            type_def.accept(self); 
-        }
-        
+        // Procesar cada tipo y guardar su definición
+for type_def in &mut program.types {
+    type_def.accept(self);
+    self.type_defs.insert(type_def.name.clone(), type_def.clone());
+}
+
         // Registrar funciones
         for func in &program.functions {
             self.functions.insert(func.name.clone(), FunctionInfo {
@@ -715,18 +976,28 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
-        self.enter_scope();
-        for (name, init_expr) in &mut expr.bindings {
-            let init_ty = init_expr.accept(self);
-            println!("binding {} type: {:?}", name, init_ty);
+    self.enter_scope();
+    for (name, ann, init_expr) in &mut expr.bindings {
+        let init_ty = init_expr.accept(self);
+        if let Some(ann_ty) = ann {
+            let resolved_ann = match ann_ty {
+                HulkType::UserDefined(s) => HulkType::Class(s.clone()),
+                _ => ann_ty.clone(),
+            };
+            if let Err(msg) = self.unifier.unify(&init_ty, &resolved_ann) {
+                self.add_type_error(msg, init_expr.span());
+            }
+            let final_ty = self.unifier.resolve(&init_ty);
+            self.declare_var(name.clone(), final_ty);
+        } else {
             self.declare_var(name.clone(), init_ty);
-            
         }
-        let body_ty = expr.body.accept(self);
-        self.exit_scope();
-        expr.ty = Some(body_ty.clone());
-        body_ty
     }
+    let body_ty = expr.body.accept(self);
+    self.exit_scope();
+    expr.ty = Some(body_ty.clone());
+    body_ty
+}
 
     fn visit_assign(&mut self, expr: &mut DestructiveAssignExpr) -> HulkType {
         // Verificar si el lado izquierdo es una variable llamada "self"
@@ -833,10 +1104,25 @@ impl Visitor for TypeChecker {
 
         if let Some(info) = self.functions.get_mut(&func.name) {
             // Guardar las variables de tipo sin resolver
-            info.param_types = Some(param_vars);
+            info.param_types = Some(param_vars.clone());
             info.return_type = Some(ret_var.clone());
             info.is_generic = is_generic;
         }
+
+        for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
+    // Primero la anotación si existe
+    if let Some(ann) = &param.ty_annotation {
+        let resolved_ann = match ann {
+            HulkType::UserDefined(name) => HulkType::Class(name.clone()),
+            _ => ann.clone(),
+        };
+        if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+            self.add_type_error(msg, param.span);
+        }
+    }
+    param.ty = Some(var_ty.clone());
+    self.declare_var(param.name.clone(), var_ty.clone());
+}
 
         self.exit_scope();
         ret_var
@@ -855,6 +1141,12 @@ impl Visitor for TypeChecker {
                 self.add_type_error(format!("Parent type '{}' not found", pname), type_def.span);
             }
         }
+        if let Some(ref pname) = parent_name {
+    if pname == "Number" || pname == "String" || pname == "Boolean" {
+        self.add_type_error(format!("Cannot inherit from primitive type '{}'", pname), type_def.span);
+    }
+
+}
 
         // Crear variables de tipo para los parámetros formales
         let param_vars: Vec<HulkType> = (0..type_def.params.len())

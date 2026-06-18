@@ -153,7 +153,7 @@ impl Visitor for MonomorphizationPass {
     }
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
-        for (_, init) in &mut expr.bindings {
+        for (_, _,init) in &mut expr.bindings {
             init.accept(self)?;
         }
         expr.body.accept(self)?;

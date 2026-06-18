@@ -110,6 +110,8 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
     type_checker.resolve_ast(&mut ast);
 
+    type_checker.flatten_all_types();
+
     if print_typed {
         let mut printer = PrettyPrinter::new();
         ast.accept(&mut printer);
