@@ -57,7 +57,6 @@ extern {
         "=>"     => Token::Arrow,
         "type"   => Token::Type,
         "inherits" => Token::Inherits,
-        "base"   => Token::BaseKeyword,
         "new"    => Token::New,
         "Number" => Token::NumberType,
         "String" => Token::StringType,
@@ -718,12 +717,12 @@ AtomicExpr: Box<Expr> = {
 
     // Generic function call (includes sin, cos, range, etc.)
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
-        Box::new(Expr::Call(CallExpr {
-            func: id,
-            args: args,
-            span: Span::new(start, end),
-            ty: None,
-        }))
+        // If it's "base" and has no arguments, generate BaseExpr
+        if id == "base" && args.is_empty() {
+            Box::new(Expr::Base(BaseExpr { span: Span::new(start, end), ty: None }))
+        } else {
+            Box::new(Expr::Call(CallExpr { func: id, args, span: Span::new(start, end), ty: None }))
+        }
     },
 
     <start:@L> "new" <ty:Type> "(" <args:Comma<Expr>> ")" <end:@R> => {
@@ -738,12 +737,6 @@ AtomicExpr: Box<Expr> = {
             ty: None,
         }))
     },
-
-    // base
-    <start:@L> "base" <end:@R> => Box::new(Expr::Base(BaseExpr {
-        span: Span::new(start, end),
-        ty: None,
-    })),
 
     //id
     <start:@L> <id:"identifier"> <end:@R> => Box::new(Expr::Variable(VariableExpr {
