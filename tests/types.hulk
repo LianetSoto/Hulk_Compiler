@@ -2,24 +2,11 @@ type Point(x, y) {
     x = x;
     y = y;
     getX() => self.x;
-    setX(v: Number) => self.x := v;
-    move(dx, dy) {
-        self.x := self.x + dx;
-        self.y := self.y + dy;
-    }
-}
-
-type PolarPoint(phi, rho) inherits Point(rho * cos(phi), rho * sin(phi)) {
-    getPhi() => self.phi;
-    getRho() => self.rho;
+    setX(v:Number) => self.x := v;
+   
 }
 
 let p = new Point(3, 4) in {
     print(p.getX());
-    p.setX(10);
-    p.move(1, 2);
-    print(p.getX());
-    let pp = new PolarPoint(3.14159/4, 5) in {
-        print(pp.getX());
-    };
+
 }

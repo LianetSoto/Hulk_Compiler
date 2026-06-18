@@ -483,7 +483,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         self.push_scope();
 
         // Process bindings left‑to‑right so later initializers can see earlier variables
-        for (name, init_expr) in &mut expr.bindings {
+        for (name, _, init_expr) in &mut expr.bindings {
             // Evaluate the initializer expression
             let init_val = init_expr.accept(self)?;
 
@@ -1014,4 +1014,14 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
         todo!()
     }
+
+    fn visit_protocol_def(&mut self, _proto: &mut ProtocolDef) -> Self::Result {
+    // La generación de código para protocolos no está implementada aún.
+    // Por ahora no hacemos nada.
+    todo!()
+}
+
+fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {
+    todo!()
+}
 }

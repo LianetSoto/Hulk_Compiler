@@ -211,7 +211,7 @@ impl TypeChecker {
                     if let Some(ty) = &l.ty {
                         l.ty = Some(unifier.resolve(ty));
                     }
-                    for (_, init) in &mut l.bindings {
+                    for (_, _, init) in &mut l.bindings {
                         resolve_expr(unifier, init);
                     }
                     resolve_expr(unifier, &mut l.body);
@@ -716,13 +716,41 @@ impl Visitor for TypeChecker {
 
     fn visit_let(&mut self, expr: &mut LetExpr) -> Self::Result {
         self.enter_scope();
-        for (name, init_expr) in &mut expr.bindings {
-            let init_ty = init_expr.accept(self);
-            println!("binding {} type: {:?}", name, init_ty);
-            self.declare_var(name.clone(), init_ty);
-            
+        for (name, ann, init_expr) in &mut expr.bindings {
+    let init_ty = init_expr.accept(self);
+    // Ahora usa `ann` para la anotación de tipo (si existe)
+    if let Some(ann_ty) = ann {
+        let resolved_ann = match ann_ty {
+            HulkType::UserDefined(s) => HulkType::Class(s.clone()),
+            _ => ann_ty.clone(),
+        };
+        if let Err(msg) = self.unifier.unify(&init_ty, &resolved_ann) {
+            self.add_type_error(msg, init_expr.span());
         }
+        let final_ty = self.unifier.resolve(&init_ty);
+        self.declare_var(name.clone(), final_ty);
+    } else {
+        self.declare_var(name.clone(), init_ty);
+    }
+}
         let body_ty = expr.body.accept(self);
+        for (name, ann, init_expr) in &mut expr.bindings {
+    let init_ty = init_expr.accept(self);
+    if let Some(ann_ty) = ann {
+        let resolved_ann = match ann_ty {
+            HulkType::UserDefined(s) => HulkType::Class(s.clone()),
+            _ => ann_ty.clone(),
+        };
+        if let Err(msg) = self.unifier.unify(&init_ty, &resolved_ann) {
+            self.add_type_error(msg, init_expr.span());
+        }
+        // Después de unificar, resolver el tipo para obtener el concreto
+        let final_ty = self.unifier.resolve(&init_ty);
+        self.declare_var(name.clone(), final_ty);
+    } else {
+        self.declare_var(name.clone(), init_ty);
+    }
+}
         self.exit_scope();
         expr.ty = Some(body_ty.clone());
         body_ty
@@ -833,10 +861,25 @@ impl Visitor for TypeChecker {
 
         if let Some(info) = self.functions.get_mut(&func.name) {
             // Guardar las variables de tipo sin resolver
-            info.param_types = Some(param_vars);
+            info.param_types = Some(param_vars.clone());
             info.return_type = Some(ret_var.clone());
             info.is_generic = is_generic;
         }
+
+        for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
+    // Primero la anotación si existe
+    if let Some(ann) = &param.ty_annotation {
+        let resolved_ann = match ann {
+            HulkType::UserDefined(name) => HulkType::Class(name.clone()),
+            _ => ann.clone(),
+        };
+        if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+            self.add_type_error(msg, param.span);
+        }
+    }
+    param.ty = Some(var_ty.clone());
+    self.declare_var(param.name.clone(), var_ty.clone());
+}
 
         self.exit_scope();
         ret_var
