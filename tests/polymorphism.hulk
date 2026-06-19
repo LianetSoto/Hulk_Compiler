@@ -6,7 +6,7 @@ type Person(firstname, lastname) {
 }
 
 type Knight inherits Person {
-    name() => "Sir" @@ base.name();
+    name() => "Sir" @@ base();
 }
 
 let p = new Knight("Phil", "Collins") in
