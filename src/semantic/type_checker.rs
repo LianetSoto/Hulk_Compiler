@@ -30,14 +30,14 @@ struct MethodInfo {
 }
 
 #[derive(Clone)]
-struct FlattenedMethod {
-    pub method: Method,              // Copia del método (con su cuerpo)
-    pub vtable_index: usize,         // Índice en la VTable
-    pub base_target: Option<String>, // Nombre LLVM del método del padre si usa base()
+pub struct FlattenedMethod {
+    pub method: Method,              
+    pub vtable_index: usize,        
+    pub defining_type: String,
 }
 
 #[derive(Clone, Default)]
-struct FlattenedType {
+pub struct FlattenedType {
     pub attributes: Vec<Attribute>,       // Atributos en orden (padre → hijo)
     pub methods: Vec<FlattenedMethod>,    // Métodos efectivos (con índices VTable)
     pub parent_name: Option<String>,      // Nombre del padre directo
@@ -89,8 +89,6 @@ impl TypeChecker {
             Err(self.errors.clone())
         }
     }
-
-    
 
         fn register_builtin_types(&mut self) {
             // Insertar Object en self.types
@@ -462,45 +460,35 @@ impl TypeChecker {
         }
 
         // --- Métodos y VTable ---
-        let mut methods = parent_flattened.methods.clone();
-        let mut max_index = methods.iter()
-            .map(|m| m.vtable_index)
-            .max()
-            .unwrap_or(0);
+let mut methods = parent_flattened.methods.clone();
+let mut max_index = methods.iter()
+    .map(|m| m.vtable_index)
+    .max()
+    .unwrap_or(0);
 
-        for method in &type_def.methods {
-            // Detectar si el método usa base()
-            let mut detector = BaseDetector { found: false };
-            // Clonar el cuerpo para poder llamar a accept con mutabilidad
-            let mut body_clone = method.body.clone();
-            body_clone.accept(&mut detector);
-            let base_target = if detector.found {
-                Some(format!("{}.{}", parent_name.as_deref().unwrap_or("Object"), method.name))
-            } else {
-                None
-            };
-
-            // Buscar si ya existe un método con mismo nombre y número de parámetros
-            if let Some(existing_pos) = methods.iter().position(|m| {
-                m.method.name == method.name && m.method.params.len() == method.params.len()
-            }) {
-                // Sobrescritura: reemplazar manteniendo el índice
-                let old_index = methods[existing_pos].vtable_index;
-                methods[existing_pos] = FlattenedMethod {
-                    method: method.clone(),
-                    vtable_index: old_index,
-                    base_target,
-                };
-            } else {
-                // Nuevo método: asignar nuevo índice
-                max_index += 1;
-                methods.push(FlattenedMethod {
-                    method: method.clone(),
-                    vtable_index: max_index,
-                    base_target,
-                });
-            }
-        }
+for method in &type_def.methods {
+    // Buscar si ya existe un método con mismo nombre y número de parámetros
+    if let Some(existing_pos) = methods.iter().position(|m| {
+        m.method.name == method.name && m.method.params.len() == method.params.len()
+    }) {
+        // Sobrescritura: reemplazar manteniendo el índice, pero actualizando defining_type
+        let old_index = methods[existing_pos].vtable_index;
+        methods[existing_pos] = FlattenedMethod {
+            method: method.clone(),
+            vtable_index: old_index,
+            defining_type: type_def.name.clone(), // ← el tipo actual es quien define el método ahora
+        };
+    } else {
+        // Nuevo método: asignar nuevo índice
+        
+        methods.push(FlattenedMethod {
+            method: method.clone(),
+            vtable_index: max_index,
+            defining_type: type_def.name.clone(), // ← definido en el tipo actual
+        });
+        max_index += 1;
+    }
+}
 
         // --- Parámetros efectivos y argumentos para el constructor padre ---
         let (params, mut parent_init_args) = if type_def.params.is_empty() {
@@ -563,7 +551,12 @@ impl TypeChecker {
 
     pub fn get_type_def(&self, name: &str) -> Option<&TypeDef> {
         self.type_defs.get(name)
-    }}
+    }
+
+    pub fn get_flattened_types(&self) -> &HashMap<String, FlattenedType> {
+        &self.flattened_types
+    }
+}
 
 
 struct BaseDetector {
