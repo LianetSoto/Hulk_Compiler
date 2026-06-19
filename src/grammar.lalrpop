@@ -719,7 +719,7 @@ AtomicExpr: Box<Expr> = {
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
         // If it's "base" and has no arguments, generate BaseExpr
         if id == "base" && args.is_empty() {
-            Box::new(Expr::Base(BaseExpr { span: Span::new(start, end), ty: None }))
+            Box::new(Expr::Base(BaseExpr { span: Span::new(start, end), ty: None, base_type: None, method_name: None, }))
         } else {
             Box::new(Expr::Call(CallExpr { func: id, args, span: Span::new(start, end), ty: None }))
         }

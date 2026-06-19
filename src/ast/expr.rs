@@ -358,6 +358,8 @@ impl Node for SelfExpr {
 pub struct BaseExpr {
     pub span: Span,
     pub ty: Option<HulkType>,
+    pub base_type: Option<String>, // Parent type that provides the implementation.
+    pub method_name: Option<String>, // Name of the invoked method.
 }
 
 impl Node for BaseExpr {
