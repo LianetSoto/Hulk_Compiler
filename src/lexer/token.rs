@@ -86,6 +86,8 @@ pub enum Token {
 
     // String literals
     Str(String),
+
+    Error,
 }
 
 // Implementación de Display para errores bonitos
@@ -153,6 +155,7 @@ impl fmt::Display for Token {
             Token::Range => write!(f, "range"),
             Token::Protocol => write!(f, "protocol"),
             Token::Extends => write!(f, "extends"),
+            Token::Error =>  write!(f, "error"),
         }
     }
 }

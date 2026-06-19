@@ -271,8 +271,8 @@ impl Lexer {
                 tokens.push((i, lexer_token, pos + 1));
                 i = pos + 1;
             } else {
-                // Carácter no reconocido - intentar como token individual
-                // For now, skip
+                // Carácter no reconocido 
+                tokens.push((i, LexerToken::Error, i + 1));
                 i += 1;
             }
         }
