@@ -480,13 +480,13 @@ for method in &type_def.methods {
         };
     } else {
         // Nuevo método: asignar nuevo índice
-        
+        max_index += 1;
         methods.push(FlattenedMethod {
             method: method.clone(),
             vtable_index: max_index,
             defining_type: type_def.name.clone(), // ← definido en el tipo actual
         });
-        max_index += 1;
+        
     }
 }
 
