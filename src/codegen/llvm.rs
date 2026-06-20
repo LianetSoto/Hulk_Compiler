@@ -1,9 +1,9 @@
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::builder::Builder;
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, GlobalValue};
 use std::collections::HashMap;
-use crate::semantic::HulkType;
+use crate::semantic::{HulkType, FlattenedType};
 use crate::ast::{Program, Node, Expr, TypeDef};
 use crate::error::{CompilerError};
 use inkwell::types::{StructType, BasicTypeEnum};
@@ -15,8 +15,11 @@ pub struct LlvmCodeGen<'ctx> {
     pub(crate) scopes: Vec<HashMap<String, PointerValue<'ctx>>>,
     pub(crate) current_function: Option<FunctionValue<'ctx>>,
     pub(crate) user_functions: HashMap<String, FunctionValue<'ctx>>, 
+    pub(crate) method_functions: HashMap<String, FunctionValue<'ctx>>,
     pub(crate) type_structs: HashMap<String, StructType<'ctx>>,
     pub(crate) type_defs: HashMap<String, TypeDef>,
+    pub(crate) flattened_types: HashMap<String, FlattenedType>,
+    pub(crate) vtables: HashMap<String, Option<GlobalValue<'ctx>>>,
 }
 
 impl<'ctx> LlvmCodeGen<'ctx> {
@@ -33,8 +36,11 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             scopes: vec![HashMap::new()],
             current_function: None,
             user_functions: HashMap::new(),
+            method_functions: HashMap::new(),
             type_structs: HashMap::new(),
             type_defs: HashMap::new(),
+            flattened_types: HashMap::new(),
+            vtables: HashMap::new(),
         }
     }
 
@@ -46,6 +52,10 @@ impl<'ctx> LlvmCodeGen<'ctx> {
     pub fn write_to_file(&self, filename: &str) -> Result<(), CompilerError> {
         self.module.print_to_file(filename)
             .map_err(|e| CompilerError::IoError(e.to_string()))
+    }
+
+    pub fn set_flattened_types(&mut self, types: HashMap<String, FlattenedType>) {
+        self.flattened_types = types;
     }
 
     // Scope management (variable symbol table)
@@ -119,7 +129,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
     /// and returns a pointer to the memory location where a value can be stored.
     pub(crate) fn eval_lvalue(&mut self, expr: &mut Expr) -> Result<PointerValue<'ctx>, CompilerError> {
         match expr {
-            // --- Simple variable ---
+            // Simple variable
             Expr::Variable(var) => {
                 match self.lookup_var(&var.name) {
                     Some(ptr) => Ok(ptr),
@@ -130,13 +140,13 @@ impl<'ctx> LlvmCodeGen<'ctx> {
                 }
             }
 
-            // --- Attribute access (e.g. self.x, obj.field) ---
+            // Attribute access (e.g. self.x, obj.field)
             Expr::AttributeAccess(attr) => {
                 let (ptr, _) = self.get_attribute_ptr(attr)?;
                 Ok(ptr)
             }
 
-            // --- Anything else is not assignable (should be caught by TypeChecker) ---
+            // Anything else is not assignable (should be caught by TypeChecker)
             _ => Err(CompilerError::CodegenError {
                 msg: "left-hand side of assignment is not assignable".to_string(),
                 span: Some(expr.span()),

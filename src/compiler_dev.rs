@@ -142,6 +142,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
     // 4. Code generation (LLVM IR)
     let context = Context::create();
     let mut codegen = LlvmCodeGen::new(&context, "hulk_module");
+    codegen.set_flattened_types(type_checker.get_flattened_types().clone());
     if let Err(err) = codegen.compile(&mut ast) {
         report_error(&err, &source_map, filename);
         process::exit(1);

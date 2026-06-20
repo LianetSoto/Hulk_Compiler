@@ -1,9 +1,10 @@
 use super::llvm::LlvmCodeGen;
 use crate::ast::*;
 use crate::error::CompilerError;
-use inkwell::values::BasicValueEnum;
 use crate::semantic::HulkType;
 use inkwell::types::{BasicTypeEnum};
+use inkwell::AddressSpace;
+use inkwell::values::{BasicValueEnum, BasicMetadataValueEnum};
 
 impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     type Result = Result<BasicValueEnum<'ctx>, CompilerError>;
@@ -26,7 +27,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
             for method in &type_def.methods {
                 let func_name = format!("{}.{}", owner, method.name);
-
+              
                 let mut param_types = vec![self_ptr_ty];
                 for p in &method.params {
                     let hulk_ty = p.ty.as_ref().unwrap();
@@ -37,8 +38,10 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                     method.ty.as_ref().unwrap_or(&HulkType::Number),
                 )?;
 
-                self.declare_function_generic(&func_name, ret_ty, &param_types);
-            }
+                // Declare the function and obtain a FunctionValue
+                let func = self.declare_function_generic(&func_name, ret_ty, &param_types);
+
+                self.method_functions.insert(func_name.clone(), func);}
         }
     
         // Declare all global function (built‑ins and user‑defined)
@@ -58,6 +61,17 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             }
         }
 
+        // Generate VTables for all classes that have methods
+        // self.flattened_types must already be populated (e.g. from TypeChecker)
+        for (type_name, flat) in self.flattened_types.clone().iter() {
+            if flat.methods.is_empty() {
+                self.vtables.insert(type_name.clone(), None); // no methods → null vtable
+                continue;
+            }
+            let vtable = self.generate_vtable(type_name, flat)?;
+            self.vtables.insert(type_name.clone(), vtable);
+        }
+
         // Generate the `main` entry point
         let i32_type = self.context.i32_type();
         let main_type = i32_type.fn_type(&[], false);
@@ -67,7 +81,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         self.current_function = Some(main_fn);
 
         // Seed the C random generator so that `rand()` is non‑deterministic.
-        self.seed_random_generator()?;
+        self.seed_random_generator()?; 
 
         // Compile the global entry‑point expression.
         let _ = program.main_expr.accept(self)?;
@@ -216,7 +230,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 Ok(val.into())
             }
 
-            BinOp::Pow => { //Revisar
+            BinOp::Pow => { 
 
                 let lhs = lhs_val.into_float_value();
                 let rhs = rhs_val.into_float_value();
@@ -386,6 +400,26 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                         Ok(val.into())
                     }
 
+                    HulkType::Class(_) => {
+                        // Identity equality for class types (pointer comparison)
+                        let lhs_ptr = lhs_val.into_pointer_value();
+                        let rhs_ptr = rhs_val.into_pointer_value();
+                        let pred = if matches!(expr.op, BinOp::Eq) {
+                            inkwell::IntPredicate::EQ
+                        } else {
+                            inkwell::IntPredicate::NE
+                        };
+                        let val = self.builder.build_int_compare(
+                            pred,
+                            lhs_ptr,
+                            rhs_ptr,
+                            "objcmp",
+                        ).map_err(|e| CompilerError::CodegenError {
+                            msg: e.to_string(),
+                            span: Some(expr.span),
+                        })?;
+                        Ok(val.into())
+                    }
                     _ => Err(CompilerError::CodegenError {
                         msg: format!("equality not implemented for type {:?}", ty),
                         span: Some(expr.span),
@@ -745,7 +779,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
     fn visit_type_def(&mut self, type_def: &mut TypeDef) -> Self::Result {
 
-        let struct_ty = self.build_struct_type(type_def)?;
+        let flat = self.flattened_types.get(&type_def.name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("Flattened type not found for '{}'", type_def.name),
+                span: Some(type_def.span),
+            })?;
+        let struct_ty = self.build_struct_type_from_flat(flat)?;
 
         self.type_structs.insert(type_def.name.clone(), struct_ty);
         self.type_defs.insert(type_def.name.clone(), type_def.clone()); 
@@ -753,10 +792,10 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(self.context.f64_type().const_float(0.0).into())
     }
     
-    /// Generates LLVM IR for the `new` expression 
-    /// Allocates a heap object, initializes its fields, and returns a typed pointer.
+    /// Generates LLVM IR for the `new` expression.
+    /// Allocates a heap object, initializes the vtable pointer and the attributes,
+    /// and returns a typed pointer to the object.
     fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
-
         // Look up the type definition and the LLVM struct
         let type_def_ref = self.type_defs.get(&expr.type_name).ok_or_else(|| {
             CompilerError::CodegenError {
@@ -764,16 +803,18 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 span: Some(expr.span),
             }
         })?;
-        let mut type_def = type_def_ref.clone();                    // mutable copy for attribute iteration
-        let struct_ty = self.type_structs[&expr.type_name]; // LLVM struct type (e.g., %Point)
+        let mut type_def = type_def_ref.clone();
+        let struct_ty = self.type_structs[&expr.type_name];
 
         // Allocate raw memory with malloc
         let malloc_fn = self.declare_malloc();
+
         let size_val = struct_ty.size_of()
             .ok_or_else(|| CompilerError::CodegenError {
                 msg: format!("unable to determine size of type '{}'", expr.type_name),
                 span: Some(expr.span),
             })?;
+
         let obj_ptr = self.builder.build_call(malloc_fn, &[size_val.into()], "new_obj")
             .map_err(|e| CompilerError::CodegenError {
                 msg: format!("malloc failed: {}", e),
@@ -797,7 +838,45 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             span: Some(expr.span),
         })?;
 
-        // Push a scope for constructor arguments 
+        // VTable initialization (field 0)
+        let vtable_opt = self.vtables.get(&expr.type_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("vtable entry not found for type '{}'", expr.type_name),
+                span: Some(expr.span),
+            }
+        })?;
+
+        let vtable_slot = self.builder.build_struct_gep(
+            struct_ty,
+            typed_ptr,
+            0,                  // field 0 is always the vtable pointer
+            "vtable_slot",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: format!("GEP for vtable slot failed: {}", e),
+            span: Some(expr.span),
+        })?;
+
+        match vtable_opt {
+            Some(vtable) => {
+                // Store the address of the global VTable
+                self.builder.build_store(vtable_slot, vtable.as_pointer_value())
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: format!("store vtable failed: {}", e),
+                        span: Some(expr.span),
+                    })?;
+            }
+            None => {
+                // No methods → store null pointer
+                let null_vtable = struct_ty.ptr_type(inkwell::AddressSpace::default()).const_null();
+                self.builder.build_store(vtable_slot, null_vtable)
+                    .map_err(|e| CompilerError::CodegenError {
+                        msg: format!("store null vtable failed: {}", e),
+                        span: Some(expr.span),
+                    })?;
+            }
+        }
+
+        // Push a scope for constructor arguments
         self.push_scope();
 
         // Evaluate constructor arguments and store them in local variables
@@ -821,13 +900,13 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             self.insert_var(param_name.clone(), alloca);
         }
 
-        // Initialize each attribute using struct_gep + store 
+        // Initialize each attribute (starting from field 1, field 0 is vtable)
         for (i, attr) in type_def.attributes.iter_mut().enumerate() {
             let init_val = attr.init_expr.accept(self)?;
             let field_ptr = self.builder.build_struct_gep(
                 struct_ty,
                 typed_ptr,
-                i as u32,
+                (i + 1) as u32,              
                 &format!("field_{}", i),
             )
             .map_err(|e| CompilerError::CodegenError {
@@ -838,7 +917,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
         }
 
-        // Pop the argument scope and return the typed pointer 
+        // Pop the argument scope and return the typed pointer
         self.pop_scope();
         Ok(typed_ptr.into())
     }
@@ -885,13 +964,14 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     /// the actual return value of the method is emitted by the `ret`
     /// instruction inside `compile_llvm_function`.
     fn visit_method(&mut self, method: &mut Method) -> Self::Result {
-      
         let owner_type = method.type_name.as_ref().unwrap();
         let func_name = format!("{}.{}", owner_type, method.name);
-        let func = self.module.get_function(&func_name).expect("undeclared method");
-        
+
+        let func = self.method_functions.get(&func_name)
+            .expect("undeclared method");
+
         let mut params = Vec::new();
-     
+
         let struct_ty = self.type_structs[owner_type];
         let ptr_ty = struct_ty.ptr_type(inkwell::AddressSpace::default()).into();
         params.push(("self".to_string(), ptr_ty));
@@ -900,77 +980,10 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             params.push((param.name.clone(), llvm_ty));
         }
 
-        self.compile_llvm_function(func, params, &mut method.body, method.span)?;
+        self.compile_llvm_function(*func, params, &mut method.body, method.span)?;
         Ok(self.context.f64_type().const_float(0.0).into())
     }
-    
-    /// Generates LLVM IR for a method call expression (`obj.method(args)`).
-    ///
-    /// In HULK every method receives an implicit first argument `self` that
-    /// points to the instance.  This method therefore:
-    /// 1. Evaluates the object expression to obtain a pointer to the struct.
-    /// 2. Determines the concrete type of the object (using the type annotation
-    ///    left by the `TypeChecker`).
-    /// 3. Looks up the LLVM function whose name follows the convention
-    ///    `{TypeName}.{methodName}` (e.g. `Point.getX`).
-    /// 4. Builds the argument list: first the object pointer, then the
-    ///    remaining method arguments (evaluated recursively).
-    /// 5. Emits a `call` instruction and returns the result.
-    ///
-    /// # Errors
-    /// - If the type of the object cannot be determined.
-    /// - If the method is not found in the LLVM module.
-    /// - If any argument fails to compile.
-    fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
-
-        // 1. Evaluate the object expression
-        let obj_val = expr.object.accept(self)?;
-
-        // 2. Retrieve the static type of the object (HULK type)
-        let hulk_ty = expr.object.get_type().ok_or_else(|| CompilerError::CodegenError {
-            msg: "type not inferred for object".to_string(),
-            span: Some(expr.span),
-        })?;
-
-        // Extract the class name.  We assume HULK types for user‑defined
-        // classes are represented as `HulkType::Class(name)`.
-        let type_name = match hulk_ty {
-            HulkType::Class(name) => name.as_str(),
-            _ => {
-                return Err(CompilerError::CodegenError {
-                    msg: format!("expected an object type, found {:?}", hulk_ty),
-                    span: Some(expr.span),
-                });
-            }
-        };
-
-        // 3. Look up the LLVM function for the method
-        let func_name = format!("{}.{}", type_name, expr.method);
-        let func = self.module.get_function(&func_name).ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: format!("method '{}' not found in type '{}'", expr.method, type_name),
-                span: Some(expr.span),
-            }
-        })?;
-
-        // 4. Build the argument list: self + user arguments
-        let obj_ptr = obj_val.into_pointer_value();
-        let mut args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = vec![obj_ptr.into()];
-
-        for arg in &mut expr.args {
-            args.push(arg.accept(self)?.into());
-        }
-
-        // 5. Emit the call
-        let call_site = self.builder.build_call(func, &args, "calltmp")
-            .map_err(|e| CompilerError::CodegenError {
-                msg: e.to_string(),
-                span: Some(expr.span),
-            })?;
-
-        Ok(call_site.try_as_basic_value().left().unwrap().into())
-    }
-    
+        
     /// Generates LLVM IR for the `self` expression.
     ///
     /// `self` may refer either to the current instance (a pointer to the
@@ -1006,7 +1019,137 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
         Ok(loaded.into())
     }
-    
+
+    /// Generates LLVM IR for a method call expression (`obj.method(args)`).
+    ///
+    /// This implements **dynamic dispatch** via the object's virtual method table (vtable).
+    fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
+
+        // Evaluate the receiver object 
+        let obj_ptr = expr.object.accept(self)?.into_pointer_value();
+
+        // Obtain the static type of the receiver 
+        let hulk_ty = expr.object.get_type().ok_or_else(|| CompilerError::CodegenError {
+            msg: "type not inferred for object".into(),
+            span: Some(expr.span),
+        })?;
+
+        let type_name = match hulk_ty {
+            HulkType::Class(name) => name.as_str(),
+            _ => {
+                return Err(CompilerError::CodegenError {
+                    msg: "method call on non-object".into(),
+                    span: Some(expr.span),
+                });
+            }
+        };
+
+        // Look up the flattened type and find the matching method 
+        let flat = self.flattened_types.get(type_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("flattened type '{}' not found", type_name),
+                span: Some(expr.span),
+            }
+        })?;
+
+        let fm = flat.methods
+            .iter()
+            .find(|m| m.method.name == expr.method && m.method.params.len() == expr.args.len())
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("method '{}' with {} args not found", expr.method, expr.args.len()),
+                span: Some(expr.span),
+            })?;
+
+        // Load the vtable pointer from the object (field 0) 
+        let struct_ty = self.type_structs[type_name];
+
+        let vtable_slot = self.builder.build_struct_gep(
+            struct_ty,
+            obj_ptr,
+            0,                  // field 0 is always the vtable pointer
+            "vtable_slot",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let array_ty = ptr_ty.array_type(flat.methods.len() as u32);
+
+        let vtable_ptr = self.builder.build_load(
+            array_ty.ptr_type(AddressSpace::default()),
+            vtable_slot,
+            "vtable",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?
+        .into_pointer_value();
+
+        // Index the vtable to get the function pointer 
+        let method_slot = unsafe {
+            self.builder.build_gep(
+                array_ty,           // the vtable is an array of pointers
+                vtable_ptr,
+                &[
+                    self.context.i32_type().const_zero(),
+                    self.context.i32_type().const_int(fm.vtable_index as u64, false),
+                ],
+                "method_slot",
+            )
+        }.map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+
+        let raw_fn = self.builder.build_load(
+            ptr_ty,
+            method_slot,
+            "method",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?
+        .into_pointer_value();
+
+        // Retrieve the LLVM function signature using the DEFINING type 
+        let func_name = format!("{}.{}", fm.defining_type, expr.method);
+
+        let declared = self.method_functions.get(&func_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("method '{}' not declared", func_name),
+                span: Some(expr.span),
+            })?;
+
+        let fn_type = declared.get_type();
+
+        // Build argument list (self + user arguments) 
+        let mut args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        args.push(obj_ptr.into());               // the receiver object (self)
+
+        for arg in &mut expr.args {
+            args.push(arg.accept(self)?.into()); // evaluate each argument
+        }
+
+        // Emit indirect call 
+        let call = self.builder.build_indirect_call(
+            fn_type,
+            raw_fn,
+            &args,
+            "calltmp",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+
+        Ok(call.try_as_basic_value().left().unwrap().into())
+    }
+
+    /// Generates LLVM IR for the `base()` expression.
+    ///
+    /// `base()` is only valid inside a method that overrides a parent method.
+    /// It performs a direct static call to the closest ancestor implementation
+    /// of the current method.  
     fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
         todo!()
     }
@@ -1016,13 +1159,11 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
 
     fn visit_protocol_def(&mut self, _proto: &mut ProtocolDef) -> Self::Result {
-    // La generación de código para protocolos no está implementada aún.
-    // Por ahora no hacemos nada.
-    todo!()
-}
+        todo!()
+    }
 
-fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {
-    todo!()
-}
+    fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {
+        todo!()
+    }
 
 }
