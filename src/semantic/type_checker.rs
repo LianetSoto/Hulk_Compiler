@@ -1206,7 +1206,7 @@ impl Visitor for TypeChecker {
             let init_ty = init_expr.accept(self);
             if let Some(ann_ty) = ann {
                 let resolved_ann = self.resolve_annotation(ann_ty);
-                // Verificar conformidad (en lugar de unify)
+                // Verificar conformidad (debe cumplirse)
                 if !self.conforms_to(&init_ty, &resolved_ann) {
                     self.add_type_error(
                         format!("Cannot initialize variable of type {:?} with value of type {:?}", resolved_ann, init_ty),
@@ -1214,10 +1214,22 @@ impl Visitor for TypeChecker {
                     );
                     self.declare_var(name.clone(), HulkType::Error);
                 } else {
-                    self.declare_var(name.clone(), resolved_ann);
+                    // IMPORTANTE: si init_ty es más específico que resolved_ann,
+                    // declaramos la variable con init_ty (el tipo real)
+                    // Para ello, resolvemos init_ty para asegurarnos de que no queden variables sin resolver.
+                    let final_ty = if self.conforms_to(&init_ty, &resolved_ann) {
+                        // init_ty conforma a la anotación, pero puede ser más específico.
+                        // Usamos init_ty (resuelto) como tipo de la variable.
+                        self.unifier.resolve(&init_ty)
+                    } else {
+                        resolved_ann
+                    };
+                    self.declare_var(name.clone(), final_ty);
                 }
             } else {
-                self.declare_var(name.clone(), init_ty);
+                // Sin anotación, usar init_ty tal cual (resuelto)
+                let final_ty = self.unifier.resolve(&init_ty);
+                self.declare_var(name.clone(), final_ty);
             }
         }
         let body_ty = expr.body.accept(self);
