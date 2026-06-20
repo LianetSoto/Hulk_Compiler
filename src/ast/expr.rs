@@ -23,6 +23,7 @@ pub enum Expr {
     SelfExpr(SelfExpr),
     Base(BaseExpr),
     AttributeAccess(AttributeAccessExpr),
+    Lambda(LambdaExpr),
 }
 
 impl Expr {
@@ -47,6 +48,7 @@ impl Expr {
             Expr::SelfExpr(self_expr) => self_expr.span,
             Expr::Base(base_expr) => base_expr.span,
             Expr::AttributeAccess(attr)=> attr.span,
+            Expr::Lambda(lambda) => lambda.span,
         }
     }
 
@@ -70,6 +72,7 @@ impl Expr {
             Expr::SelfExpr(self_expr) => self_expr.ty.as_ref(),
             Expr::Base(base_expr) => base_expr.ty.as_ref(),
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
+            Expr::Lambda(lambda) => lambda.ty.as_ref(),
         }
     }
 
@@ -93,6 +96,7 @@ impl Expr {
             Expr::SelfExpr(e) => &mut e.ty,
             Expr::Base(e) => &mut e.ty,
             Expr::AttributeAccess(e) => &mut e.ty,
+            Expr::Lambda(e) => &mut e.ty,
         }
     }
 }
@@ -118,6 +122,7 @@ impl Node for Expr {
             Expr::SelfExpr(self_expr) => self_expr.accept(visitor),
             Expr::Base(base_expr) => base_expr.accept(visitor),
             Expr::AttributeAccess(attr) => attr.accept(visitor),
+            Expr::Lambda(lambda) => lambda.accept(visitor),
         }
     }
 }
@@ -379,5 +384,19 @@ pub struct AttributeAccessExpr {
 impl Node for AttributeAccessExpr {
     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         visitor.visit_attribute_access(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambdaExpr {
+    pub params: Vec<(String, Option<HulkType>)>,
+    pub body: Box<Expr>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for LambdaExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_lambda(self)
     }
 }
