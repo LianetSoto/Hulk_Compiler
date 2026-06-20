@@ -1324,14 +1324,29 @@ impl Visitor for TypeChecker {
         let ret_var = self.return_var.get(&func.name).expect("No return var").clone();
 
         self.enter_scope();
+
+        // Primero, declarar los parámetros en el ámbito con sus variables de tipo
+        // y **unificar las anotaciones de tipo** inmediatamente.
         for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
+            // Unificar la anotación de tipo (si existe) con la variable de tipo
+            if let Some(ann) = &param.ty_annotation {
+                let resolved_ann = match ann {
+                    HulkType::UserDefined(name) => HulkType::Class(name.clone()),
+                    _ => ann.clone(),
+                };
+                if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+                    self.add_type_error(msg, param.span);
+                }
+            }
+            // Guardar la variable de tipo en el AST (sin resolver aún)
             param.ty = Some(var_ty.clone());
             self.declare_var(param.name.clone(), var_ty.clone());
         }
 
+        // Analizar el cuerpo de la función (ahora 'n' ya está unificado con Number)
         let body_ty = func.body.accept(self);
 
-        // Verificar retorno con conformidad (si hay anotación)
+        // Verificar el tipo de retorno con la anotación (si existe)
         if let Some(ret_ann) = &func.ty_annotation {
             let resolved_ret = self.resolve_annotation(ret_ann);
             if !self.conforms_to(&body_ty, &resolved_ret) {
@@ -1342,38 +1357,30 @@ impl Visitor for TypeChecker {
             }
         }
 
-        // Unificar para inferencia
+        // Unificar el tipo del cuerpo con la variable de retorno (para inferencia)
         if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
             self.add_type_error(msg, func.span);
         }
 
+        // Guardar el tipo de retorno de la función (resuelto después de la unificación)
         func.ty = Some(ret_var.clone());
 
+        // Calcular si la función es genérica
         let is_generic = param_vars.iter().any(|t| {
             matches!(self.unifier.apply(t), HulkType::Var(_))
-        });
+        }) || matches!(self.unifier.apply(&ret_var), HulkType::Var(_));
 
         func.is_generic = is_generic;
 
+        // Actualizar la información de la función para las llamadas
         if let Some(info) = self.functions.get_mut(&func.name) {
             info.param_types = Some(param_vars.clone());
             info.return_type = Some(ret_var.clone());
             info.is_generic = is_generic;
         }
 
-        for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
-            if let Some(ann) = &param.ty_annotation {
-                let resolved_ann = match ann {
-                    HulkType::UserDefined(name) => HulkType::Class(name.clone()),
-                    _ => ann.clone(),
-                };
-                if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
-                    self.add_type_error(msg, param.span);
-                }
-            }
-            param.ty = Some(var_ty.clone());
-            self.declare_var(param.name.clone(), var_ty.clone());
-        }
+        // (Opcional) Ya no necesitas el segundo bucle, porque las anotaciones ya se unificaron.
+        // Pero si quieres mantenerlo para otros propósitos, puedes dejarlo vacío.
 
         self.exit_scope();
         ret_var
