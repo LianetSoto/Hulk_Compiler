@@ -648,25 +648,128 @@ impl TypeChecker {
                 }
             };
 
-            // Número de parámetros
             if class_method.param_types.len() != proto_method.param_types.len() {
                 return false;
             }
 
-            // Contravariante: los parámetros de la clase deben ser supertipos de los del protocolo
+            // Contravariante: parámetros de la clase deben ser supertipos de los del protocolo
             for (class_p, proto_p) in class_method.param_types.iter().zip(proto_method.param_types.iter()) {
-                if !self.is_subtype(proto_p, class_p) {
+                if !self.conforms_to(proto_p, class_p) {
                     return false;
                 }
             }
 
-            // Covariante: el retorno de la clase debe ser subtipo del retorno del protocolo
-            if !self.is_subtype(&class_method.return_type, &proto_method.return_type) {
+            // Covariante: retorno de la clase debe ser subtipo del retorno del protocolo
+            if !self.conforms_to(&class_method.return_type, &proto_method.return_type) {
                 return false;
             }
         }
 
         true
+    }
+
+    /// Determina si `sub` conforma a `sup` según la jerarquía de tipos de HULK.
+    pub fn conforms_to(&self, sub: &HulkType, sup: &HulkType) -> bool {
+        // 1. Error no conforma a nada (ni siquiera a sí mismo)
+        if matches!(sub, HulkType::Error) || matches!(sup, HulkType::Error) {
+            return false;
+        }
+        // 2. Variables de tipo: durante la inferencia, son compatibles con todo
+        if matches!(sub, HulkType::Var(_)) || matches!(sup, HulkType::Var(_)) {
+            return true;
+        }
+        // 3. Object es supertipo de todo
+        if matches!(sup, HulkType::Object) {
+            return true;
+        }
+        // 4. Tipos primitivos (Number, String, Boolean): solo conforman a sí mismos
+        match (sub, sup) {
+            (HulkType::Number, HulkType::Number) => true,
+            (HulkType::String, HulkType::String) => true,
+            (HulkType::Boolean, HulkType::Boolean) => true,
+            // 5. Clases nominales
+            (HulkType::Class(sub_name), HulkType::Class(sup_name)) => {
+                if sub_name == sup_name { return true; }
+                // Recorrer cadena de herencia
+                let mut current = sub_name.clone();
+                while let Some(info) = self.types.get(&current) {
+                    if let Some(parent) = &info.parent {
+                        if parent == sup_name { return true; }
+                        current = parent.clone();
+                    } else {
+                        break;
+                    }
+                }
+                false
+            }
+            // 6. Protocolos
+            (HulkType::Protocol(sub_name), HulkType::Protocol(sup_name)) => {
+                if sub_name == sup_name { return true; }
+                let mut current = sub_name.clone();
+                while let Some(info) = self.protocols.get(&current) {
+                    if let Some(parent) = &info.extends {
+                        if parent == sup_name { return true; }
+                        current = parent.clone();
+                    } else {
+                        break;
+                    }
+                }
+                false
+            }
+            // 7. Una clase puede conformar a un protocolo si lo implementa
+            (HulkType::Class(class_name), HulkType::Protocol(proto_name)) => {
+                self.type_conforms_to_protocol(class_name, proto_name)
+            }
+            // 8. Un protocolo no conforma a una clase (excepto Object, ya cubierto)
+            _ => false,
+        }
+    }
+
+    /// Devuelve la lista de ancestros de una clase (desde ella misma hasta Object).
+    fn get_ancestors(&self, class_name: &str) -> Vec<String> {
+        let mut ancestors = Vec::new();
+        let mut current = class_name.to_string();
+        ancestors.push(current.clone());
+        while let Some(info) = self.types.get(&current) {
+            if let Some(parent) = &info.parent {
+                ancestors.push(parent.clone());
+                current = parent.clone();
+            } else {
+                break;
+            }
+        }
+        ancestors
+    }
+
+    /// Calcula el tipo más específico al que ambos tipos conforman.
+    pub fn lowest_common_ancestor(&self, t1: &HulkType, t2: &HulkType) -> Option<HulkType> {
+        // Si son iguales, devolver ese tipo
+        if t1 == t2 { return Some(t1.clone()); }
+        // Si uno conforma al otro, el LCA es el supertipo
+        if self.conforms_to(t1, t2) { return Some(t2.clone()); }
+        if self.conforms_to(t2, t1) { return Some(t1.clone()); }
+
+        match (t1, t2) {
+            (HulkType::Class(c1), HulkType::Class(c2)) => {
+                let anc1 = self.get_ancestors(c1);
+                let anc2 = self.get_ancestors(c2);
+                // Buscar el primer ancestro común desde la raíz (Object) hacia abajo
+                for a in anc1 {
+                    if anc2.contains(&a) {
+                        return Some(HulkType::Class(a));
+                    }
+                }
+                // Si no, Object (pero Object no es clase, es tipo primitivo)
+                Some(HulkType::Object)
+            }
+            (HulkType::Protocol(p1), HulkType::Protocol(p2)) => {
+                // Similar para protocolos (menos común, pero se puede implementar)
+                // Por simplicidad, devolvemos Protocol(p1) si p1 extiende a p2 o viceversa
+                // O simplemente Object si no hay relación
+                Some(HulkType::Object)
+            }
+            _ => Some(HulkType::Object) // Por defecto Object
+        }
     }
 }
 
@@ -966,12 +1069,12 @@ impl Visitor for TypeChecker {
                         );
                         return HulkType::Error;
                     }
+
                     // Si la función es genérica, instanciar variables de tipo frescas
                     let (param_types, ret_ty) = if func_info.is_generic {
                         let mut var_map = HashMap::new();
-                        
-                        // Función auxiliar para instanciar (clonar) variables genéricas 
-                        // sin alterar las originales de la definición
+
+                        // Función auxiliar para instanciar (clonar) variables genéricas
                         let mut instantiate = |ty: &HulkType, unifier: &mut Unifier, map: &mut HashMap<usize, HulkType>| -> HulkType {
                             let applied = unifier.apply(ty);
                             if let HulkType::Var(id) = applied {
@@ -992,15 +1095,17 @@ impl Visitor for TypeChecker {
                                 let new_params: Vec<HulkType> = orig_params.iter()
                                     .map(|p| instantiate(p, &mut self.unifier, &mut var_map))
                                     .collect();
-                                
+
                                 let new_ret = instantiate(orig_ret_var, &mut self.unifier, &mut var_map);
-                                
+
                                 (new_params, new_ret)
                             } else {
-                                (vec![], HulkType::Error)
+                                self.add_type_error(format!("Function '{}' has not been inferred yet", expr.func), expr.span);
+                                return HulkType::Error;
                             }
                         } else {
-                            (vec![], HulkType::Error)
+                            self.add_type_error(format!("Function '{}' has not been inferred yet", expr.func), expr.span);
+                            return HulkType::Error;
                         }
                     } else {
                         // Para funciones no-genéricas, usar directamente los tipos
@@ -1014,14 +1119,23 @@ impl Visitor for TypeChecker {
                         let ret = func_info.return_type.unwrap_or(HulkType::Object);
                         (param_types, ret)
                     };
-                                        
-                    for (i, (arg, expected)) in expr.args.iter_mut().zip(param_types.iter()).enumerate() {
+
+                    // Verificar argumentos con conformidad (y también unificar para inferencia)
+                    for (arg, expected) in expr.args.iter_mut().zip(param_types.iter()) {
                         let arg_ty = arg.accept(self);
+                        // Verificar conformidad
+                        if !self.conforms_to(&arg_ty, expected) {
+                            self.add_type_error(
+                                format!("Argument type {:?} does not conform to parameter type {:?}", arg_ty, expected),
+                                arg.span(),
+                            );
+                        }
+                        // Aún unificar para la inferencia (puede ser necesario)
                         if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
                             self.add_type_error(msg, arg.span());
                         }
                     }
-                    
+
                     // Resolver el tipo de retorno después de la unificación
                     let applied_ret_ty = self.unifier.apply(&ret_ty);
                     expr.ty = Some(applied_ret_ty.clone());
@@ -1092,32 +1206,15 @@ impl Visitor for TypeChecker {
             let init_ty = init_expr.accept(self);
             if let Some(ann_ty) = ann {
                 let resolved_ann = self.resolve_annotation(ann_ty);
-                // Si la anotación es un protocolo, no unificamos con el tipo real,
-                // solo verificamos conformance al asignar.
-                if let HulkType::Protocol(proto_name) = &resolved_ann {
-                    // El valor debe ser una instancia de una clase que implemente el protocolo
-                    match &init_ty {
-                        HulkType::Class(class_name) => {
-                            if !self.type_conforms_to_protocol(class_name, proto_name) {
-                                self.add_type_error(
-                                    format!("Type '{}' does not conform to protocol '{}'", class_name, proto_name),
-                                    init_expr.span(),
-                                );
-                            }
-                            self.declare_var(name.clone(), resolved_ann);
-                        }
-                        _ => {
-                            self.add_type_error("Protocol annotations can only be used with class instances".to_string(), init_expr.span());
-                            self.declare_var(name.clone(), HulkType::Error);
-                        }
-                    }
+                // Verificar conformidad (en lugar de unify)
+                if !self.conforms_to(&init_ty, &resolved_ann) {
+                    self.add_type_error(
+                        format!("Cannot initialize variable of type {:?} with value of type {:?}", resolved_ann, init_ty),
+                        init_expr.span(),
+                    );
+                    self.declare_var(name.clone(), HulkType::Error);
                 } else {
-                    // Anotación de clase o tipo concreto
-                    if let Err(msg) = self.unifier.unify(&init_ty, &resolved_ann) {
-                        self.add_type_error(msg, init_expr.span());
-                    }
-                    let final_ty = self.unifier.resolve(&init_ty);
-                    self.declare_var(name.clone(), final_ty);
+                    self.declare_var(name.clone(), resolved_ann);
                 }
             } else {
                 self.declare_var(name.clone(), init_ty);
@@ -1158,7 +1255,8 @@ impl Visitor for TypeChecker {
         }
 
         // Caso normal (clase, tipos concretos)
-        if lhs_ty != HulkType::Error && !value_ty.is_compatible_with(&lhs_ty) {
+        // Verificar conformidad (en lugar de is_compatible_with)
+        if lhs_ty != HulkType::Error && !self.conforms_to(&value_ty, &lhs_ty) {
             self.add_type_error(
                 format!("Cannot assign {:?} to expression of type {:?}", value_ty, lhs_ty),
                 expr.span,
@@ -1169,7 +1267,7 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result {
-        let mut last_ty = HulkType::Number; // fallback, pero HULK siempre tiene al menos una expresión
+        let mut last_ty = HulkType::Number;
         for e in &mut expr.expressions {
             last_ty = e.accept(self);
         }
@@ -1179,26 +1277,30 @@ impl Visitor for TypeChecker {
 
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result {
         let cond_ty = expr.condition.accept(self);
-        if let Err(msg) = self.unifier.unify(&cond_ty, &HulkType::Boolean) {
-            self.add_type_error(msg, expr.condition.span());
+        if !self.conforms_to(&cond_ty, &HulkType::Boolean) {
+            self.add_type_error("If condition must be Boolean".to_string(), expr.condition.span());
         }
         let then_ty = expr.then_branch.accept(self);
         let else_ty = expr.else_branch.accept(self);
-        let result_var = self.unifier.new_var();
-        if let Err(msg) = self.unifier.unify(&then_ty, &else_ty) {
-            self.add_type_error(msg, expr.span);
-        }
-        if let Err(msg) = self.unifier.unify(&result_var, &then_ty) {
-            self.add_type_error(msg, expr.span);
-        }
-        expr.ty = Some(result_var.clone());
-        result_var
+        // Calcular LCA
+        let result_ty = match self.lowest_common_ancestor(&then_ty, &else_ty) {
+            Some(ty) => ty,
+            None => {
+                self.add_type_error(
+                    format!("Incompatible types in if branches: {:?} and {:?}", then_ty, else_ty),
+                    expr.span,
+                );
+                HulkType::Object // fallback
+            }
+        };
+        expr.ty = Some(result_ty.clone());
+        result_ty
     }
 
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result {
         let cond_ty = expr.condition.accept(self);
-        if let Err(msg) = self.unifier.unify(&cond_ty, &HulkType::Boolean) {
-            self.add_type_error(msg, expr.condition.span());
+        if !self.conforms_to(&cond_ty, &HulkType::Boolean) {
+            self.add_type_error("While condition must be Boolean".to_string(), expr.condition.span());
         }
         let body_ty = expr.body.accept(self);
         expr.ty = Some(body_ty.clone());
@@ -1211,26 +1313,30 @@ impl Visitor for TypeChecker {
 
         self.enter_scope();
         for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
-            // Guardar la variable de tipo sin resolver
             param.ty = Some(var_ty.clone());
             self.declare_var(param.name.clone(), var_ty.clone());
         }
 
         let body_ty = func.body.accept(self);
 
+        // Verificar retorno con conformidad (si hay anotación)
+        if let Some(ret_ann) = &func.ty_annotation {
+            let resolved_ret = self.resolve_annotation(ret_ann);
+            if !self.conforms_to(&body_ty, &resolved_ret) {
+                self.add_type_error(
+                    format!("Return type {:?} does not conform to annotated type {:?}", body_ty, resolved_ret),
+                    func.span,
+                );
+            }
+        }
+
+        // Unificar para inferencia
         if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
             self.add_type_error(msg, func.span);
         }
 
-
-        // Guardar sin resolver - las variables de tipo sin resolver
-        // Se resolverán al final en resolve_ast
         func.ty = Some(ret_var.clone());
 
-        // Determinar si es genérica basándose en si los parámetros resultan ser Object cuando se resuelvan
-        // pero por ahora, una función es genérica si tiene variables de tipo sin vincular
-        // Determinar si es genérica basándose en si los parámetros resultan ser variables 
-        // de tipo sin vincular después de inferir el cuerpo.
         let is_generic = param_vars.iter().any(|t| {
             matches!(self.unifier.apply(t), HulkType::Var(_))
         });
@@ -1238,26 +1344,24 @@ impl Visitor for TypeChecker {
         func.is_generic = is_generic;
 
         if let Some(info) = self.functions.get_mut(&func.name) {
-            // Guardar las variables de tipo sin resolver
             info.param_types = Some(param_vars.clone());
             info.return_type = Some(ret_var.clone());
             info.is_generic = is_generic;
         }
 
         for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
-    // Primero la anotación si existe
-    if let Some(ann) = &param.ty_annotation {
-        let resolved_ann = match ann {
-            HulkType::UserDefined(name) => HulkType::Class(name.clone()),
-            _ => ann.clone(),
-        };
-        if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
-            self.add_type_error(msg, param.span);
+            if let Some(ann) = &param.ty_annotation {
+                let resolved_ann = match ann {
+                    HulkType::UserDefined(name) => HulkType::Class(name.clone()),
+                    _ => ann.clone(),
+                };
+                if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+                    self.add_type_error(msg, param.span);
+                }
+            }
+            param.ty = Some(var_ty.clone());
+            self.declare_var(param.name.clone(), var_ty.clone());
         }
-    }
-    param.ty = Some(var_ty.clone());
-    self.declare_var(param.name.clone(), var_ty.clone());
-}
 
         self.exit_scope();
         ret_var
@@ -1277,11 +1381,11 @@ impl Visitor for TypeChecker {
             }
         }
         if let Some(ref pname) = parent_name {
-    if pname == "Number" || pname == "String" || pname == "Boolean" {
-        self.add_type_error(format!("Cannot inherit from primitive type '{}'", pname), type_def.span);
-    }
+            if pname == "Number" || pname == "String" || pname == "Boolean" {
+                self.add_type_error(format!("Cannot inherit from primitive type '{}'", pname), type_def.span);
+            }
 
-}
+        }
 
         // Crear variables de tipo para los parámetros formales
         let param_vars: Vec<HulkType> = if type_def.params.is_empty() && parent_name.is_some() {
@@ -1398,17 +1502,14 @@ impl Visitor for TypeChecker {
         self.current_method = Some(method.name.clone());
         self.enter_scope();
 
-        // Declarar self con el tipo de la clase actual (no Object)
         let self_ty = HulkType::Class(current_type_name.clone());
         self.declare_var("self".to_string(), self_ty.clone());
 
-        // Crear variables de tipo para los parámetros
         let param_vars: Vec<HulkType> = (0..method.params.len())
             .map(|_| self.unifier.new_var())
             .collect();
         let ret_var = self.unifier.new_var();
 
-        // Guardar la información del método (todavía con variables, sin resolver)
         let method_info = MethodInfo {
             param_types: param_vars.clone(),
             return_type: ret_var.clone(),
@@ -1419,11 +1520,8 @@ impl Visitor for TypeChecker {
             }
         }
 
-        // Declarar parámetros y procesar anotaciones de tipo
         for (param, var_ty) in method.params.iter_mut().zip(param_vars.iter()) {
-            // Si hay anotación de tipo, unificarla con la variable de tipo
             if let Some(ann) = &param.ty_annotation {
-                // Convertir UserDefined a Class si es necesario
                 let resolved_ann = match ann {
                     HulkType::UserDefined(name) => HulkType::Class(name.clone()),
                     _ => ann.clone(),
@@ -1436,7 +1534,6 @@ impl Visitor for TypeChecker {
             self.declare_var(param.name.clone(), var_ty.clone());
         }
 
-        // Procesar anotación de retorno del método
         if let Some(ret_ann) = &method.ty_annotation {
             let resolved_ret_ann = match ret_ann {
                 HulkType::UserDefined(name) => HulkType::Class(name.clone()),
@@ -1447,20 +1544,17 @@ impl Visitor for TypeChecker {
             }
         }
 
-        // Analizar el cuerpo
         let body_ty = method.body.accept(self);
         if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
             self.add_type_error(msg, method.span);
         }
 
-        // Resolver tipos finales (las variables de tipo que se unificaron se convierten)
         let resolved_params: Vec<HulkType> = param_vars.iter()
             .map(|v| self.unifier.resolve(v))
             .collect();
         let resolved_ret = self.unifier.resolve(&ret_var);
         method.ty = Some(resolved_ret.clone());
 
-        // Actualizar la información guardada
         if let Some(type_name) = &self.current_type {
             if let Some(type_info) = self.types.get_mut(type_name) {
                 if let Some(m_info) = type_info.methods.get_mut(&method.name) {
@@ -1473,7 +1567,7 @@ impl Visitor for TypeChecker {
         self.exit_scope();
         resolved_ret
     }
-    
+        
     fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
         let type_info = match self.types.get(&expr.type_name) {
             Some(info) => info.clone(),
@@ -1506,17 +1600,14 @@ impl Visitor for TypeChecker {
     }
         
     fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
-        // 1. Obtener el tipo del objeto receptor
         let obj_ty = expr.object.accept(self);
-        
-        // 2. Determinar el nombre del tipo asociado
-        let type_name = match &*expr.object {  // ← desreferenciar el Box
+
+        let type_name = match &*expr.object {
             Expr::Variable(var) => {
                 if let Some(ty) = self.lookup_var(&var.name) {
-                    println!("variable {} type: {:?}", var.name, ty);
                     match ty {
                         HulkType::Class(name) => name,
-                        HulkType::Protocol(name) => name,   // ← añadir esta línea
+                        HulkType::Protocol(name) => name,
                         _ => {
                             self.add_type_error("Method call on non‑class or non‑protocol object".to_string(), expr.span);
                             return HulkType::Error;
@@ -1534,9 +1625,8 @@ impl Visitor for TypeChecker {
                 })
             }
             Expr::Base(_) => {
-                // El tipo de base se obtiene de expr.object.get_type()
                 if let Some(HulkType::Class(name)) = expr.object.get_type() {
-                    name.clone()
+                    name.clone()   // ← clonar para obtener String
                 } else {
                     self.add_type_error("'base' does not have a valid class type".to_string(), expr.span);
                     return HulkType::Error;
@@ -1547,31 +1637,28 @@ impl Visitor for TypeChecker {
                 return HulkType::Error;
             }
         };
-        
+
         let method_info = if let Some(proto_info) = self.protocols.get(&type_name) {
-        // Es un protocolo
-        match proto_info.methods.get(&expr.method) {
-            Some(m) => m.clone(),
-            None => {
-                self.add_type_error(format!("Method '{}' not found in protocol '{}'", expr.method, type_name), expr.span);
-                return HulkType::Error;
+            match proto_info.methods.get(&expr.method) {
+                Some(m) => m.clone(),
+                None => {
+                    self.add_type_error(format!("Method '{}' not found in protocol '{}'", expr.method, type_name), expr.span);
+                    return HulkType::Error;
+                }
             }
-        }
-    } else if let Some(class_info) = self.types.get(&type_name) {
-        // Es una clase
-        match class_info.methods.get(&expr.method) {
-            Some(m) => m.clone(),
-            None => {
-                self.add_type_error(format!("Method '{}' not found in type '{}'", expr.method, type_name), expr.span);
-                return HulkType::Error;
+        } else if let Some(class_info) = self.types.get(&type_name) {
+            match class_info.methods.get(&expr.method) {
+                Some(m) => m.clone(),
+                None => {
+                    self.add_type_error(format!("Method '{}' not found in type '{}'", expr.method, type_name), expr.span);
+                    return HulkType::Error;
+                }
             }
-        }
-    } else {
-        self.add_type_error(format!("Type or protocol '{}' not found", type_name), expr.span);
-        return HulkType::Error;
-    };
-        
-        // 4. Verificar número de argumentos
+        } else {
+            self.add_type_error(format!("Type or protocol '{}' not found", type_name), expr.span);
+            return HulkType::Error;
+        };
+
         if expr.args.len() != method_info.param_types.len() {
             self.add_type_error(
                 format!("Method '{}' expects {} arguments", expr.method, method_info.param_types.len()),
@@ -1579,24 +1666,29 @@ impl Visitor for TypeChecker {
             );
             return HulkType::Error;
         }
-        
-        // 5. Evaluar argumentos y unificar
+
         let mut arg_tys = Vec::new();
         for arg in &mut expr.args {
             arg_tys.push(arg.accept(self));
         }
-        
+
         for (arg_ty, param_ty) in arg_tys.iter().zip(method_info.param_types.iter()) {
+            // Verificar conformidad
+            if !self.conforms_to(arg_ty, param_ty) {
+                self.add_type_error(
+                    format!("Argument type {:?} does not conform to parameter type {:?}", arg_ty, param_ty),
+                    expr.span,
+                );
+            }
+            // Unificar para inferencia
             if let Err(msg) = self.unifier.unify(arg_ty, param_ty) {
                 self.add_type_error(msg, expr.span);
             }
         }
-        
+
         let ret_ty = method_info.return_type.clone();
-        // Resolver el tipo de retorno después de la unificación
         let applied_ret_ty = self.unifier.apply(&ret_ty);
         expr.ty = Some(applied_ret_ty.clone());
-        
         applied_ret_ty
     }
 
