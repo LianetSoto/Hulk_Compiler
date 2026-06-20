@@ -1025,8 +1025,4 @@ fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Resul
     todo!()
 }
 
-fn visit_base_call(&mut self, _expr: &mut BaseCallExpr) -> Self::Result {
-    // Stub: no se usa porque no generamos código de base()
-    todo!()
-}
 }

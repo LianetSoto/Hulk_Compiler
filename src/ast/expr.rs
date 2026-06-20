@@ -22,7 +22,6 @@ pub enum Expr {
     MethodCall(MethodCallExpr),
     SelfExpr(SelfExpr),
     Base(BaseExpr),
-    BaseCall(BaseCallExpr),
     AttributeAccess(AttributeAccessExpr),
     //Lambda(LambdaExpr),
 }
@@ -48,7 +47,6 @@ impl Expr {
             Expr::MethodCall(method_call_expr) => method_call_expr.span,
             Expr::SelfExpr(self_expr) => self_expr.span,
             Expr::Base(base_expr) => base_expr.span,
-            Expr::BaseCall(e) => e.span,
             Expr::AttributeAccess(attr)=> attr.span,
             //Expr::Lambda(lambda) => lambda.span,
         }
@@ -73,7 +71,6 @@ impl Expr {
             Expr::MethodCall(method_call_expr) => method_call_expr.ty.as_ref(),
             Expr::SelfExpr(self_expr) => self_expr.ty.as_ref(),
             Expr::Base(base_expr) => base_expr.ty.as_ref(),
-            Expr::BaseCall(e) => e.ty.as_ref(),
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
             //Expr::Lambda(lambda) => lambda.ty.as_ref(),
         }
@@ -98,7 +95,6 @@ impl Expr {
             Expr::MethodCall(e) => &mut e.ty,
             Expr::SelfExpr(e) => &mut e.ty,
             Expr::Base(e) => &mut e.ty,
-            Expr::BaseCall(e) => &mut e.ty,
             Expr::AttributeAccess(e) => &mut e.ty,
             //Expr::Lambda(e) => &mut e.ty,
         }
@@ -125,7 +121,6 @@ impl Node for Expr {
             Expr::MethodCall(method_call_expr) => method_call_expr.accept(visitor),
             Expr::SelfExpr(self_expr) => self_expr.accept(visitor),
             Expr::Base(base_expr) => base_expr.accept(visitor),
-            Expr::BaseCall(e) => e.accept(visitor),
             Expr::AttributeAccess(attr) => attr.accept(visitor),
             //Expr::Lambda(lambda) => lambda.accept(visitor),
         }
@@ -378,18 +373,6 @@ impl Node for BaseExpr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct BaseCallExpr {
-    pub args: Vec<Box<Expr>>,
-    pub span: Span,
-    pub ty: Option<HulkType>,
-}
-
-impl Node for BaseCallExpr {
-    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
-        visitor.visit_base_call(self)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttributeAccessExpr {
