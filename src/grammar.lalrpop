@@ -65,7 +65,7 @@ extern {
         "range"  => Token::Range,
         "protocol" => Token::Protocol,
         "extends"  => Token::Extends,
-        "base" => Token::BaseKeyword,
+
     }
 }
 
@@ -739,15 +739,6 @@ AtomicExpr: Box<Expr> = {
         };
         Box::new(Expr::New(NewExpr {
             type_name,
-            args,
-            span: Span::new(start, end),
-            ty: None,
-        }))
-    },
-
-        // base call (con argumentos)
-    <start:@L> "base" "(" <args:Comma<Expr>> ")" <end:@R> => {
-        Box::new(Expr::BaseCall(BaseCallExpr {
             args,
             span: Span::new(start, end),
             ty: None,

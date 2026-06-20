@@ -8,6 +8,7 @@ pub enum HulkType {
     Error,
     Var(usize),
     Class(String),
+    Protocol(String),
 }
 
 impl HulkType {

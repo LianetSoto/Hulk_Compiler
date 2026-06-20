@@ -397,8 +397,13 @@ impl Visitor for PrettyPrinter {
         self.write_line("Self");
     }
 
-    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
-        self.write_line("Base");
+    fn visit_base(&mut self, expr: &mut BaseExpr) -> Self::Result {
+        let base_info = match (&expr.base_type, &expr.method_name) {
+            (Some(bt), Some(mn)) => format!(" (base_type: {}, method: {})", bt, mn),
+            _ => String::new(),
+        };
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("Base{}{}", base_info, ty_str));
     }
     
     fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result {
@@ -450,19 +455,5 @@ impl Visitor for PrettyPrinter {
         self.write_line(&format!("ProtocolMethod {{ {}({}){} }}", m.name, params_str.join(", "), ret_str));
     }
 
-    fn visit_base_call(&mut self, expr: &mut BaseCallExpr) -> Self::Result {
-        self.write_line("BaseCall {");
-        self.indent += 1;
-        self.write_line("args: [");
-        self.indent += 1;
-        for (i, arg) in expr.args.iter_mut().enumerate() {
-            if i > 0 { self.write_line(","); }
-            arg.accept(self);
-        }
-        if !expr.args.is_empty() { self.write_line(""); }
-        self.indent -= 1;
-        self.write_line("]");
-        self.indent -= 1;
-        self.write_line("}");
-    }
+    
 }
