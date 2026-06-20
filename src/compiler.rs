@@ -2,7 +2,7 @@ use crate::error::CompilerError;
 use crate::parser::parse_program;
 use crate::semantic::TypeChecker;
 use crate::codegen::LlvmCodeGen;
-use crate::transform::MonomorphizationPass;
+//use crate::transform::MonomorphizationPass;
 use crate::gen_lex::lexer::build_lexer;
 use inkwell::context::Context;
 use std::process::Command;
@@ -68,7 +68,10 @@ pub fn compile(source_code: &str) -> Result<(), Vec<CompilerError>> {
 
     // Lexer
     let lexer = build_lexer(patterns);
-    let tokens = lexer.tokenize(source_code);
+    let tokens = match lexer.tokenize(source_code) {
+    Ok(t) => t,
+    Err(e) => return Err(vec![e]),
+};
     
     // Parser
     let mut ast = match parse_program(tokens) {
@@ -83,10 +86,10 @@ pub fn compile(source_code: &str) -> Result<(), Vec<CompilerError>> {
     }
 
     // Monomorphization
-    let mut mono_pass = MonomorphizationPass::new();
-    if let Err(err) = mono_pass.run(&mut ast) {
-        return Err(vec![err]);           
-    }
+    // let mut mono_pass = MonomorphizationPass::new();
+    // if let Err(err) = mono_pass.run(&mut ast) {
+    //     return Err(vec![err]);           
+    // }
 
     // Code Generation LLVM
     let context = Context::create();

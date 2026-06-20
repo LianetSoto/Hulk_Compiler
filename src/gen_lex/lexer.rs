@@ -2,6 +2,7 @@ use crate::gen_lex::dfa::Dfa;
 use crate::lexer::token::Token as LexerToken;
 use crate::gen_lex::regex_ast::RegexParser;
 use crate::gen_lex::nfa::Nfa;
+use crate::error::{CompilerError, Span};
 
 fn escape_regex_literal(pattern: &str) -> String {
     let mut escaped = String::new();
@@ -58,7 +59,7 @@ pub fn build_lexer(patterns: Vec<(&str, &str)>) -> Lexer {
 }
 
 impl Lexer {
-    pub fn tokenize(&self, input: &str) -> Vec<(usize, LexerToken, usize)> {
+    pub fn tokenize(&self, input: &str) -> Result<Vec<(usize, LexerToken, usize)>, CompilerError> {
         let mut tokens = Vec::new();
         let chars: Vec<char> = input.chars().collect();
         let mut i = 0;
@@ -165,9 +166,10 @@ impl Lexer {
                     continue;
                 }
                 else {
-        
-                panic!("Unclosed string literal starting at position {}", start);
-        
+        return Err(CompilerError::LexerError {
+        msg: "Unclosed string literal".to_string(),
+        span: Span::new(start, i),
+    });
         
             }
             }
@@ -282,6 +284,6 @@ impl Lexer {
                 i += 1;
             }
         }
-        tokens
+        Ok(tokens)
     }
 }
