@@ -242,9 +242,4 @@ impl Visitor for MonomorphizationPass {
     fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result {
         todo!()
     }
-
-    fn visit_base_call(&mut self, _expr: &mut BaseCallExpr) -> Self::Result {
-    // Stub: no se usa en la monomorfización
-    todo!()
-}
 }

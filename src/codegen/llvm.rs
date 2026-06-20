@@ -4,7 +4,7 @@ use inkwell::builder::Builder;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, GlobalValue};
 use std::collections::HashMap;
 use crate::semantic::{HulkType, FlattenedType};
-use crate::ast::{Program, Node, Expr, TypeDef};
+use crate::ast::{Program, Node, Expr, TypeDef, Method};
 use crate::error::{CompilerError};
 use inkwell::types::{StructType, BasicTypeEnum};
 
@@ -20,6 +20,7 @@ pub struct LlvmCodeGen<'ctx> {
     pub(crate) type_defs: HashMap<String, TypeDef>,
     pub(crate) flattened_types: HashMap<String, FlattenedType>,
     pub(crate) vtables: HashMap<String, Option<GlobalValue<'ctx>>>,
+    pub(crate) current_method: Option<Method>,
 }
 
 impl<'ctx> LlvmCodeGen<'ctx> {
@@ -41,6 +42,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             type_defs: HashMap::new(),
             flattened_types: HashMap::new(),
             vtables: HashMap::new(),
+            current_method: None,
         }
     }
 
