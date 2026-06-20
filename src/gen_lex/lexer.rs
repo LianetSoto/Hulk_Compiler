@@ -164,6 +164,12 @@ impl Lexer {
                     tokens.push((start, LexerToken::Str(string_content), i));
                     continue;
                 }
+                else {
+        
+                panic!("Unclosed string literal starting at position {}", start);
+        
+        
+            }
             }
 
             // Concat operators

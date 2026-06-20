@@ -346,6 +346,8 @@ impl TypeChecker {
                 type_def.param_types = type_def.param_types.iter()
                     .map(|t| self.unifier.resolve(t))
                     .collect();
+
+                self.type_defs.insert(type_def.name.clone(), type_def.clone());
             }
 
             // Resolver la expresión principal
