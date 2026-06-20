@@ -30,4 +30,5 @@ pub trait Visitor {
     fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result;
     fn visit_protocol_def(&mut self, proto: &mut ProtocolDef) -> Self::Result;
     fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result;
+    fn visit_base_call(&mut self, expr: &mut BaseCallExpr) -> Self::Result;
 }

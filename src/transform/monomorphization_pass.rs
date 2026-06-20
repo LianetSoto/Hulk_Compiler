@@ -204,6 +204,9 @@ impl MonomorphizationPass {
                     Self::substitute_in_expr(arg, subst);
                 }
             }
+            &mut Expr::BaseCall(ref mut e) => {
+    // No hacemos nada en monomorfización por ahora
+}
         }
     }
 
