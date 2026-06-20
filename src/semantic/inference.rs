@@ -31,19 +31,32 @@ impl Unifier {
 
     // Unifica dos tipos, registrando sustituciones
     pub fn unify(&mut self, a: &HulkType, b: &HulkType) -> Result<(), String> {
-        let a_resolved = self.apply(a);
-        let b_resolved = self.apply(b);
-        match (a_resolved, b_resolved) {
-            (HulkType::Var(id), other) | (other, HulkType::Var(id)) => {
-                self.subs.insert(id, other);
-                Ok(())
+    let a = self.apply(a);
+    let b = self.apply(b);
+    match (&a, &b) {
+        (HulkType::Var(id1), HulkType::Var(id2)) if id1 == id2 => Ok(()),
+        (HulkType::Var(id), _) => self.bind(*id, b),
+        (_, HulkType::Var(id)) => self.bind(*id, a),
+        (HulkType::Number, HulkType::Number) => Ok(()),
+        (HulkType::String, HulkType::String) => Ok(()),
+        (HulkType::Boolean, HulkType::Boolean) => Ok(()),
+        (HulkType::Class(c1), HulkType::Class(c2)) if c1 == c2 => Ok(()),
+        (HulkType::Protocol(p1), HulkType::Protocol(p2)) if p1 == p2 => Ok(()),
+        (HulkType::Object, HulkType::Object) => Ok(()),
+        // Si Object es supertipo, podrías permitir (sub, Object)
+        _ => Err(format!("Cannot unify {:?} and {:?}", a, b)),
+    }
+}
+    pub fn bind(&mut self, id: usize, ty: HulkType) -> Result<(), String> {
+        // Evita ciclos: si ty es Var(id2) y id2 == id, error
+        if let HulkType::Var(id2) = &ty {
+            if *id2 == id {
+                return Err("Occurs check failed".to_string());
             }
-            (HulkType::Number, HulkType::Number) => Ok(()),
-            (HulkType::String, HulkType::String) => Ok(()),
-            (HulkType::Boolean, HulkType::Boolean) => Ok(()),
-            (HulkType::Object, _) | (_, HulkType::Object) => Ok(()),
-            (a_ty, b_ty) => Err(format!("Cannot unify {:?} and {:?}", a_ty, b_ty)),
+            // Si id2 ya tiene sustitución, podrías seguirla, pero con tipos planos basta.
         }
+        self.subs.insert(id, ty);
+        Ok(())
     }
 
     pub fn resolve(&self, ty: &HulkType) -> HulkType {
