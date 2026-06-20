@@ -216,11 +216,11 @@ FunctionDef: FunctionDef = {
 };
 
  // Type parameters (identifiers only)
-TypeParam: String = {
-    <id:"identifier"> => id
+TypeParam: (String, Option<HulkType>) = {
+    <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => (name, ty_ann)
 };
 
-TypeParams: Vec<String> = {
+TypeParams: Vec<(String, Option<HulkType>)> = {
     <params:Comma<TypeParam>> => params,
 };
 
@@ -229,6 +229,12 @@ TypeDef: TypeDef = {
     <params:("(" <TypeParams> ")")?>
     <parent:ParentSpec?>
     "{" <members:TypeMembers> "}" <end:@R> => {
+        let mut names = vec![];
+        let mut types = vec![];
+        for (name, ty_ann) in params.unwrap_or_default() {
+            names.push(name);
+            types.push(ty_ann.unwrap_or(HulkType::Object));
+        }
         let mut attrs = vec![];
         let mut meths = vec![];
         for m in members {
@@ -239,8 +245,8 @@ TypeDef: TypeDef = {
         }
         TypeDef {
             name,
-            params: params.unwrap_or_default(),
-            param_types: Vec::new(),
+            params: names,          // <-- ahora usamos names
+            param_types: types,     // <-- ahora usamos types
             parent,
             attributes: attrs,
             methods: meths,
