@@ -87,7 +87,7 @@ impl MonomorphizationPass {
             HulkType::Boolean => "Bool".to_string(),
             HulkType::String => "String".to_string(),
             HulkType::Object => "Object".to_string(),
-            HulkType::Class(name) => name.clone(),
+            HulkType::Class(name) | HulkType::Protocol(name) => name.clone(),
             HulkType::UserDefined(name) => format!("UserDefined{}", name),
             HulkType::Var(id) => format!("Var{}", id),
             HulkType::Error => "Error".to_string(),
@@ -204,9 +204,6 @@ impl MonomorphizationPass {
                     Self::substitute_in_expr(arg, subst);
                 }
             }
-            &mut Expr::BaseCall(ref mut e) => {
-    // No hacemos nada en monomorfización por ahora
-}
         }
     }
 
