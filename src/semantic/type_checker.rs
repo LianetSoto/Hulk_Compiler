@@ -57,6 +57,7 @@ pub struct TypeChecker {
     self_type: Option<HulkType>,
     flattened_types: HashMap<String, FlattenedType>,
     type_defs: HashMap<String, TypeDef>,
+    current_method: Option<String>,
 }
 
 impl TypeChecker {
@@ -75,6 +76,7 @@ impl TypeChecker {
             self_type: None,
             flattened_types: HashMap::new(),
             type_defs: HashMap::new(),
+            current_method: None,
         };
         tc.register_builtin_types();
         tc
@@ -292,6 +294,14 @@ impl TypeChecker {
                             b.ty = Some(unifier.resolve(ty));
                         }
                     }
+                    Expr::BaseCall(b) => {
+                        if let Some(ty) = &b.ty {
+                            b.ty = Some(unifier.resolve(ty));
+                        }
+                        for arg in &mut b.args {
+                            resolve_expr(unifier, arg);
+                        }
+                    }
                     Expr::AttributeAccess(a) => {
                         if let Some(ty) = &a.ty {
                             a.ty = Some(unifier.resolve(ty));
@@ -338,6 +348,15 @@ impl TypeChecker {
                         }
                         if let Some(ann) = &param.ty_annotation {
                             param.ty_annotation = Some(self.unifier.resolve(ann));
+                        }
+                    }
+                    // Actualizar MethodInfo en self.types con los tipos resueltos
+                    if let Some(type_info) = self.types.get_mut(&type_def.name) {
+                        if let Some(m_info) = type_info.methods.get_mut(&method.name) {
+                            m_info.param_types = method.params.iter()
+                                .map(|p| p.ty.as_ref().unwrap().clone())
+                                .collect();
+                            m_info.return_type = method.ty.as_ref().unwrap().clone();
                         }
                     }
                     resolve_expr(&self.unifier, &mut method.body);
@@ -462,33 +481,26 @@ impl TypeChecker {
         }
 
         // --- Métodos y VTable ---
+// --- Métodos y VTable ---
 let mut methods = parent_flattened.methods.clone();
-let mut max_index = methods.iter()
-    .map(|m| m.vtable_index)
-    .max()
-    .unwrap_or(0);
 
 for method in &type_def.methods {
-    // Buscar si ya existe un método con mismo nombre y número de parámetros
     if let Some(existing_pos) = methods.iter().position(|m| {
         m.method.name == method.name && m.method.params.len() == method.params.len()
     }) {
-        // Sobrescritura: reemplazar manteniendo el índice, pero actualizando defining_type
         let old_index = methods[existing_pos].vtable_index;
         methods[existing_pos] = FlattenedMethod {
             method: method.clone(),
             vtable_index: old_index,
-            defining_type: type_def.name.clone(), // ← el tipo actual es quien define el método ahora
+            defining_type: type_def.name.clone(),
         };
     } else {
-        // Nuevo método: asignar nuevo índice
-        max_index += 1;
+        let new_index = methods.len(); // ← aquí está la clave
         methods.push(FlattenedMethod {
             method: method.clone(),
-            vtable_index: max_index,
-            defining_type: type_def.name.clone(), // ← definido en el tipo actual
+            vtable_index: new_index,
+            defining_type: type_def.name.clone(),
         });
-        
     }
 }
 
@@ -642,6 +654,12 @@ impl Visitor for BaseDetector {
     // Asegúrate de que también tengas los de protocolo (ya los tenías)
     fn visit_protocol_def(&mut self, _proto: &mut ProtocolDef) -> Self::Result {}
     fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {}
+    fn visit_base_call(&mut self, expr: &mut BaseCallExpr) -> Self::Result {
+        for arg in &mut expr.args {
+            arg.accept(self);
+        }
+    }
+    
 }
 
 impl Visitor for TypeChecker {
@@ -1144,9 +1162,21 @@ for type_def in &mut program.types {
 }
 
         // Crear variables de tipo para los parámetros formales
-        let param_vars: Vec<HulkType> = (0..type_def.params.len())
-            .map(|_| self.unifier.new_var())
-            .collect();
+        let param_vars: Vec<HulkType> = if type_def.params.is_empty() && parent_name.is_some() {
+            // Heredar parámetros del padre
+            if let Some(parent_def) = self.type_defs.get(parent_name.as_ref().unwrap()) {
+                // Copiar los nombres de parámetros del padre a type_def.params
+                type_def.params = parent_def.params.clone();
+                type_def.param_types = parent_def.param_types.clone();
+            }
+            if let Some(parent_info) = self.types.get(parent_name.as_ref().unwrap()) {
+                parent_info.param_vars.clone()
+            } else {
+                vec![]
+            }
+        } else {
+            (0..type_def.params.len()).map(|_| self.unifier.new_var()).collect()
+        };
 
         // Registrar el tipo con sus variables de parámetro
         let mut type_info = TypeInfo {
@@ -1243,7 +1273,7 @@ for type_def in &mut program.types {
     
     fn visit_method(&mut self, method: &mut Method) -> Self::Result {
         let current_type_name = self.current_type.as_ref().unwrap().clone();
-
+        self.current_method = Some(method.name.clone());
         self.enter_scope();
 
         // Declarar self con el tipo de la clase actual (no Object)
@@ -1317,7 +1347,7 @@ for type_def in &mut program.types {
                 }
             }
         }
-
+        self.current_method = None;
         self.exit_scope();
         resolved_ret
     }
@@ -1379,6 +1409,15 @@ for type_def in &mut program.types {
                     self.add_type_error("'self' used outside method".to_string(), expr.span);
                     "".to_string()
                 })
+            }
+            Expr::Base(_) => {
+                // El tipo de base se obtiene de expr.object.get_type()
+                if let Some(HulkType::Class(name)) = expr.object.get_type() {
+                    name.clone()
+                } else {
+                    self.add_type_error("'base' does not have a valid class type".to_string(), expr.span);
+                    return HulkType::Error;
+                }
             }
             _ => {
                 self.add_type_error("Method call on unsupported expression".to_string(), expr.span);
@@ -1447,9 +1486,7 @@ for type_def in &mut program.types {
         }
     }
     
-    fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
-        todo!()
-    }
+    
     
     fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
         let obj_ty = expr.object.accept(self);
@@ -1481,5 +1518,113 @@ for type_def in &mut program.types {
     
     fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result {
         todo!()
+    }
+
+    fn visit_base(&mut self, expr: &mut BaseExpr) -> Self::Result {
+        let current_type_name = match self.current_type.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("'base' used outside of a type".to_string(), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let type_info = match self.types.get(current_type_name) {
+            Some(info) => info,
+            None => {
+                self.add_type_error(format!("Type '{}' not found", current_type_name), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let parent_name = match type_info.parent.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error(format!("Type '{}' has no parent", current_type_name), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let ty = HulkType::Class(parent_name.clone());
+        expr.ty = Some(ty.clone());
+        ty
+    }
+
+    fn visit_base_call(&mut self, expr: &mut BaseCallExpr) -> Self::Result {
+        let current_type_name = match self.current_type.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("base used outside of type".to_string(), expr.span);
+                return HulkType::Error;
+            }
+        };
+        let type_info = match self.types.get(current_type_name) {
+            Some(info) => info,
+            None => {
+                self.add_type_error("Current type not found".to_string(), expr.span);
+                return HulkType::Error;
+            }
+        };
+        let parent_name = match type_info.parent.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("No parent type for base call".to_string(), expr.span);
+                return HulkType::Error;
+            }
+        };
+
+        let method_name = match self.current_method.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("base used outside of method".to_string(), expr.span);
+                return HulkType::Error;
+            }
+        };
+
+        // Obtener MethodInfo clonado para evitar préstamos
+        let method_info = match self.types.get(parent_name) {
+            Some(parent_info) => {
+                match parent_info.methods.get(method_name) {
+                    Some(info) => info.clone(),
+                    None => {
+                        self.add_type_error(
+                            format!("Method '{}' not found in parent type '{}'", method_name, parent_name),
+                            expr.span,
+                        );
+                        return HulkType::Error;
+                    }
+                }
+            }
+            None => {
+                self.add_type_error(format!("Parent type '{}' not found", parent_name), expr.span);
+                return HulkType::Error;
+            }
+        };
+
+        // Verificar argumentos
+        if expr.args.len() != method_info.param_types.len() {
+            self.add_type_error(
+                format!("Method '{}' expects {} arguments, got {}", method_name, method_info.param_types.len(), expr.args.len()),
+                expr.span,
+            );
+            return HulkType::Error;
+        }
+
+        let mut arg_tys = Vec::new();
+        for arg in &mut expr.args {
+            arg_tys.push(arg.accept(self));
+        }
+        for (arg_ty, param_ty) in arg_tys.iter().zip(method_info.param_types.iter()) {
+            if let Err(msg) = self.unifier.unify(arg_ty, param_ty) {
+                self.add_type_error(msg, expr.span);
+            }
+        }
+
+        let ret_ty = self.unifier.resolve(&method_info.return_type);
+        expr.ty = Some(ret_ty.clone());
+        ret_ty
     }
 }

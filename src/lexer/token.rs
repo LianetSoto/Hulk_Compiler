@@ -77,6 +77,7 @@ pub enum Token {
     StringType,   // "String"
     BooleanType,  // "Boolean"
     ObjectType,   // "Object"
+    BaseKeyword,
 
      // Identifiers
     Identifier(String),    
@@ -156,6 +157,7 @@ impl fmt::Display for Token {
             Token::Protocol => write!(f, "protocol"),
             Token::Extends => write!(f, "extends"),
             Token::Error =>  write!(f, "error"),
+            Token::BaseKeyword => write!(f, "base"),
         }
     }
 }

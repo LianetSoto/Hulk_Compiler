@@ -449,4 +449,20 @@ impl Visitor for PrettyPrinter {
         };
         self.write_line(&format!("ProtocolMethod {{ {}({}){} }}", m.name, params_str.join(", "), ret_str));
     }
+
+    fn visit_base_call(&mut self, expr: &mut BaseCallExpr) -> Self::Result {
+        self.write_line("BaseCall {");
+        self.indent += 1;
+        self.write_line("args: [");
+        self.indent += 1;
+        for (i, arg) in expr.args.iter_mut().enumerate() {
+            if i > 0 { self.write_line(","); }
+            arg.accept(self);
+        }
+        if !expr.args.is_empty() { self.write_line(""); }
+        self.indent -= 1;
+        self.write_line("]");
+        self.indent -= 1;
+        self.write_line("}");
+    }
 }

@@ -8,7 +8,7 @@ pub mod type_def;
 
 pub use node::Node;
 pub use program::Program;
-pub use expr::{BinOp, BinaryOpExpr, Expr, NumberExpr, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp, VariableExpr, LetExpr, DestructiveAssignExpr, BlockExpr,IfExpr,WhileExpr,NewExpr, MethodCallExpr, SelfExpr, BaseExpr, AttributeAccessExpr};
+pub use expr::{BinOp, BinaryOpExpr, Expr, NumberExpr, StringExpr, CallExpr, ConstExpr, BoolExpr, UnaryOpExpr, UnaryOp, VariableExpr, LetExpr, DestructiveAssignExpr, BlockExpr,IfExpr,WhileExpr,NewExpr, MethodCallExpr, SelfExpr, BaseExpr, BaseCallExpr, AttributeAccessExpr};
 pub use function::{FunctionDef, Params};
 pub use visitor::Visitor;
 pub use printer::PrettyPrinter;
