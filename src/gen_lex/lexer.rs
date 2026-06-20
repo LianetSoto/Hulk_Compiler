@@ -134,7 +134,6 @@ impl Lexer {
                     "String" => LexerToken::StringType,
                     "Boolean" => LexerToken::BooleanType,
                     "Object" => LexerToken::ObjectType,
-                    "base" => LexerToken::BaseKeyword,
                     _ => LexerToken::Identifier(token_value),
                 };
                 tokens.push((start, lexer_token, i));

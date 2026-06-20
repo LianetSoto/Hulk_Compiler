@@ -1166,8 +1166,4 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         todo!()
     }
 
-    fn visit_base_call(&mut self, expr: &mut BaseCallExpr) -> Self::Result {
-        todo!()
-    }
-    
 }
