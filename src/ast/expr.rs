@@ -49,8 +49,7 @@ impl Expr {
             Expr::Base(base_expr) => base_expr.span,
             Expr::AttributeAccess(attr)=> attr.span,
             Expr::Is(is) => is.span,
-            Expr::As(as_expr) => as_expr.span,
-            //Expr::Lambda(lambda) => lambda.span,
+            Expr::As(as_expr) => as_expr.span
         }
     }
 
@@ -76,8 +75,6 @@ impl Expr {
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
             Expr::Is(is) => is.ty.as_ref(),
             Expr::As(as_expr) => as_expr.ty.as_ref(),
-            //Expr::Lambda(lambda) => lambda.ty.as_ref(),
-
         }
     }
 
@@ -103,7 +100,6 @@ impl Expr {
             Expr::AttributeAccess(e) => &mut e.ty,
             Expr::Is(is) => &mut is.ty,
             Expr::As(as_expr) => &mut as_expr.ty,
-            //Expr::Lambda(e) => &mut e.ty,
         }
     }
 }
@@ -131,7 +127,6 @@ impl Node for Expr {
             Expr::AttributeAccess(attr) => attr.accept(visitor),
             Expr::Is(is) => is.accept(visitor),
             Expr::As(as_expr) => as_expr.accept(visitor),
-            //Expr::Lambda(lambda) => lambda.accept(visitor),
         }
     }
 }
@@ -397,19 +392,6 @@ impl Node for AttributeAccessExpr {
     }
 }
 
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct LambdaExpr {
-//     pub params: Vec<(String, Option<HulkType>)>,
-//     pub body: Box<Expr>,
-//     pub span: Span,
-//     pub ty: Option<HulkType>,
-// }
-
-// impl Node for LambdaExpr {
-//     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
-//         visitor.visit_lambda(self)
-//     }
-// }
 #[derive(Debug, Clone, PartialEq)]
 pub struct IsExpr {
     pub expr: Box<Expr>,
