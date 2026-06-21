@@ -284,9 +284,10 @@ impl Lexer {
                 tokens.push((i, lexer_token, pos + 1));
                 i = pos + 1;
             } else {
-                // Carácter no reconocido 
-                tokens.push((i, LexerToken::Error, i + 1));
-                i += 1;
+                    return Err(CompilerError::LexerError {
+                    msg: format!("Carácter no reconocido: '{}'", chars[i]),
+                    span: Span::new(i, i + 1),
+                });
             }
         }
         Ok(tokens)

@@ -38,6 +38,7 @@ pub struct FlattenedMethod {
 
 #[derive(Clone, Default)]
 pub struct FlattenedType {
+    pub type_id: u32, 
     pub attributes: Vec<Attribute>,       // Atributos en orden (padre → hijo)
     pub methods: Vec<FlattenedMethod>,    // Métodos efectivos (con índices VTable)
     pub parent_name: Option<String>,      // Nombre del padre directo
@@ -66,6 +67,7 @@ pub struct TypeChecker {
     current_method: Option<String>,
     protocols: HashMap<String, ProtocolInfo>,
     current_method_params: Option<Vec<HulkType>>,
+    next_type_id: u32,
 }
 
 impl TypeChecker {
@@ -87,6 +89,7 @@ impl TypeChecker {
             current_method: None,
             protocols: HashMap::new(),
             current_method_params: None,
+            next_type_id: 0,
         };
         tc.register_builtin_types();
         tc
@@ -568,8 +571,9 @@ impl TypeChecker {
             parent_name: parent_name.clone(),
             params: effective_params,
             parent_init_args, // ya lo tenemos
+            type_id: self.next_type_id,
         };
-
+        self.next_type_id += 1;
         self.flattened_types.insert(type_name.to_string(), flattened.clone());
         flattened
     }
@@ -937,39 +941,39 @@ impl Visitor for TypeChecker {
     type Result = HulkType;
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
+    self.register_builtin_types();
 
-        self.register_builtin_types();
-        // PASO 2: Procesar cada tipo (atributos y métodos) con el contexto adecuado
-        // Procesar cada tipo y guardar su definición
-        for type_def in &mut program.types {
-            type_def.accept(self);
-            self.type_defs.insert(type_def.name.clone(), type_def.clone());
-        }
-        
-        for proto in &mut program.protocols {
-            proto.accept(self);
-        }
-
-        // Registrar funciones
-        for func in &program.functions {
-            self.functions.insert(func.name.clone(), FunctionInfo {
-                params_len: func.params.len(),
-                param_types: None,
-                return_type: None,
-                 is_generic: false,
-            });
-        }
-        self.prepare_function_vars(program);
-
-        // Inferir funciones
-        for func in &mut program.functions {
-            func.accept(self);
-        }
-
-        // Expresión principal
-        let main_ty = program.main_expr.accept(self);
-        main_ty
+    // 1. Registrar funciones ANTES de procesar tipos
+    for func in &program.functions {
+        self.functions.insert(func.name.clone(), FunctionInfo {
+            params_len: func.params.len(),
+            param_types: None,
+            return_type: None,
+            is_generic: false,
+        });
     }
+    self.prepare_function_vars(program); // crea variables de tipo para parámetros y retorno
+
+    // 2. Procesar tipos (ahora las funciones ya están registradas)
+    for type_def in &mut program.types {
+        type_def.accept(self);
+        self.type_defs.insert(type_def.name.clone(), type_def.clone());
+    }
+
+    // 3. Procesar protocolos
+    for proto in &mut program.protocols {
+        proto.accept(self);
+    }
+
+    // 4. Inferir funciones (procesar cuerpos)
+    for func in &mut program.functions {
+        func.accept(self);
+    }
+
+    // 5. Expresión principal
+    let main_ty = program.main_expr.accept(self);
+    main_ty
+}
 
     fn visit_number(&mut self, expr: &mut NumberExpr) -> Self::Result {
         let ty = HulkType::Number;
@@ -1803,31 +1807,38 @@ impl Visitor for TypeChecker {
     }
     
     fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
-        let obj_ty = expr.object.accept(self);
-        let class_name = match obj_ty {
-            HulkType::Class(name) => name,
-            HulkType::Protocol(_) => {
-                self.add_type_error("Attribute access on protocol type not supported".to_string(), expr.span);
-                return HulkType::Error;
-            }
-            _ => {
-                self.add_type_error("Attribute access only allowed on class instances".to_string(), expr.span);
-                return HulkType::Error;
-            }
-        };
-        // Buscar en el tipo (herencia ya está incluida en TypeInfo)
-        if let Some(type_info) = self.types.get(&class_name) {
-            if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
-                expr.ty = Some(attr_ty.clone());
-                return attr_ty.clone();
-            }
-        }
-        self.add_type_error(
-            format!("Attribute '{}' not found in type '{}'", expr.attribute, class_name),
-            expr.span,
-        );
-        HulkType::Error
+    let mut obj_ty = expr.object.accept(self);
+    // Si es una variable de tipo, resolverla a su tipo concreto
+    if let HulkType::Var(_) = obj_ty {
+        obj_ty = self.unifier.resolve(&obj_ty);
     }
+    let class_name = match obj_ty {
+        HulkType::Class(name) => name,
+        HulkType::Protocol(_) => {
+            self.add_type_error("Attribute access on protocol type not supported".to_string(), expr.span);
+            return HulkType::Error;
+        }
+        _ => {
+            self.add_type_error(
+                format!("Attribute access only allowed on class instances, got {:?}", obj_ty),
+                expr.span,
+            );
+            return HulkType::Error;
+        }
+    };
+    // Buscar el atributo en el tipo
+    if let Some(type_info) = self.types.get(&class_name) {
+        if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
+            expr.ty = Some(attr_ty.clone());
+            return attr_ty.clone();
+        }
+    }
+    self.add_type_error(
+        format!("Attribute '{}' not found in type '{}'", expr.attribute, class_name),
+        expr.span,
+    );
+    HulkType::Error
+}
     
     fn visit_protocol_def(&mut self, proto: &mut ProtocolDef) -> Self::Result {
         if self.protocols.contains_key(&proto.name) {
