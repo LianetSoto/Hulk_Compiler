@@ -19,8 +19,9 @@ pub struct LlvmCodeGen<'ctx> {
     pub(crate) type_structs: HashMap<String, StructType<'ctx>>,
     pub(crate) type_defs: HashMap<String, TypeDef>,
     pub(crate) flattened_types: HashMap<String, FlattenedType>,
-    pub(crate) vtables: HashMap<String, Option<GlobalValue<'ctx>>>,
+    pub(crate) vtables: HashMap<String, GlobalValue<'ctx>>,
     pub(crate) current_method: Option<Method>,
+    pub(crate) vtable_types: HashMap<String, StructType<'ctx>>,
 }
 
 impl<'ctx> LlvmCodeGen<'ctx> {
@@ -43,6 +44,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             flattened_types: HashMap::new(),
             vtables: HashMap::new(),
             current_method: None,
+            vtable_types: HashMap::new(),
         }
     }
 
@@ -98,7 +100,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
                 if let Some(st) = self.type_structs.get(name) {
                     Ok(st.ptr_type(inkwell::AddressSpace::default()).into())
                 } else {
-                    // Fallback to opaque pointer if struct not found (could be an error too)
+                    // Fallback to opaque pointer if struct not found 
                     Ok(self.context.i8_type()
                         .ptr_type(inkwell::AddressSpace::default())
                         .into())
@@ -106,7 +108,7 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             }
             _ => Err(CompilerError::CodegenError {
                 msg: format!("unexpected type in code generation: {:?}", ty),
-                span: None, // you could pass a span if available
+                span: None, 
             }),
         }
     }

@@ -48,6 +48,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         let user_map = self.declare_all_functions(&program.functions)?;
         self.user_functions = user_map;
 
+        // Generate VTables for all classes
+        for (type_name, flat) in self.flattened_types.clone().iter() {
+            let vtable = self.generate_vtable(type_name, flat)?;
+            self.vtables.insert(type_name.clone(), vtable);
+        }
+
         // Compile the bodies of all global functions
         for func in &mut program.functions {
             func.accept(self)?;
@@ -59,17 +65,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 method.type_name = Some(type_def.name.clone()); 
                 method.accept(self)?;   
             }
-        }
-
-        // Generate VTables for all classes that have methods
-        // self.flattened_types must already be populated (e.g. from TypeChecker)
-        for (type_name, flat) in self.flattened_types.clone().iter() {
-            if flat.methods.is_empty() {
-                self.vtables.insert(type_name.clone(), None); // no methods → null vtable
-                continue;
-            }
-            let vtable = self.generate_vtable(type_name, flat)?;
-            self.vtables.insert(type_name.clone(), vtable);
         }
 
         // Generate the `main` entry point
@@ -118,20 +113,17 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     // containing the string's bytes (UTF-8 + null terminator) and returns a pointer
     // to that constant. The returned pointer can be used wherever a string is expected
 
-    // # Steps
-    // 1. Call `build_global_string_ptr` to create an LLVM global constant of type
-    //    `[N x i8]` initialized with the string's UTF-8 bytes and a null terminator.
-    //    This also returns an `i8*` pointer to the first byte.
-    // 2. Convert the returned `GlobalValue` to a `PointerValue` and then to the
-    //    generic `BasicValueEnum` expected by the visitor.
+   fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
 
-    fn visit_string(&mut self, expr: &mut StringExpr) -> Self::Result {
+        // Create an LLVM global constant of type `[N x i8]` initialized with the string's UTF-8 bytes and a null terminator.
         let ptr = self.builder
             .build_global_string_ptr(&expr.value, "str")
             .map_err(|e| CompilerError::CodegenError {
                 msg: format!("failed to create string constant: {}", e),
                 span: Some(expr.span),
             })?;
+
+        // Convert the returned `GlobalValue` to a `PointerValue` and then to the generic `BasicValueEnum` expected by the visitor.
         Ok(ptr.as_pointer_value().into())
     }
 
@@ -367,7 +359,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                         Ok(val.into())
                     }
 
-                    HulkType::String => { //Revisar
+                    HulkType::String => { 
                         // For strings we use the standard C library function `strcmp`.
                         let strcmp_fn = self.declare_strcmp();
                         let lhs_ptr = lhs_val.into_pointer_value();
@@ -656,7 +648,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 span: Some(expr.span),
             })?;
 
-        // ---- CONDITION BLOCK ----
+        // CONDITION BLOCK
         self.builder.position_at_end(cond_block);
         let cond_val = expr.condition.accept(self)?;
         let cond_i1 = cond_val.into_int_value(); // type checker guarantees Boolean
@@ -667,7 +659,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 span: Some(expr.span),
             })?;
 
-        // ---- BODY BLOCK ----
+        // BODY BLOCK
         self.builder.position_at_end(body_block);
         let body_val = expr.body.accept(self)?;
 
@@ -686,7 +678,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 span: Some(expr.span),
             })?;
 
-        // ---- END BLOCK ----
+        // END BLOCK
         self.builder.position_at_end(end_block);
 
         // Load the accumulated value (or the initial default if the loop never ran).
@@ -793,23 +785,23 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
     
     /// Generates LLVM IR for the `new` expression.
-    /// Allocates a heap object, initializes the vtable pointer and the attributes,
-    /// and returns a typed pointer to the object.
+    ///
+    /// # Layout
+    /// - Field 0 : vtable pointer (opaque `i8*`)
+    /// - Fields 1..N : attributes in inheritance order (parent first, then child)
     fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
-        
-        // Look up the type definition and the LLVM struct
-        let type_def_ref = self.type_defs.get(&expr.type_name).ok_or_else(|| {
+
+        // Look up the type definition and its LLVM struct type.
+        let type_def = self.type_defs.get(&expr.type_name).ok_or_else(|| {
             CompilerError::CodegenError {
                 msg: format!("unknown type '{}'", expr.type_name),
                 span: Some(expr.span),
             }
-        })?;
-
-        let type_def = type_def_ref.clone();
+        })?.clone();
 
         let struct_ty = self.type_structs[&expr.type_name];
 
-        // Look up the flattened type 
+        // Retrieve the flattened type (contains inherited attributes).
         let mut flat = self.flattened_types.get(&expr.type_name).ok_or_else(|| {
             CompilerError::CodegenError {
                 msg: format!("flattened type '{}' not found", expr.type_name),
@@ -817,9 +809,8 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             }
         })?.clone();
 
-        // Allocate raw memory with malloc
+        // Allocate raw memory on the heap via `malloc`.
         let malloc_fn = self.declare_malloc();
-
         let size_val = struct_ty.size_of()
             .ok_or_else(|| CompilerError::CodegenError {
                 msg: format!("unable to determine size of type '{}'", expr.type_name),
@@ -838,59 +829,57 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
                 span: Some(expr.span),
             })?;
 
-        // Cast the raw i8* to the concrete struct pointer
+        // Cast the raw `i8*` to the concrete struct pointer.
         let typed_ptr = self.builder.build_pointer_cast(
             obj_ptr,
             struct_ty.ptr_type(inkwell::AddressSpace::default()),
             "typed_obj",
-        )
-        .map_err(|e| CompilerError::CodegenError {
+        ).map_err(|e| CompilerError::CodegenError {
             msg: format!("bitcast failed: {}", e),
             span: Some(expr.span),
         })?;
 
-        // VTable initialization (field 0)
-        let vtable_opt = self.vtables.get(&expr.type_name).ok_or_else(|| {
+        // Initialize the vtable pointer.
+        let vtable_global = self.vtables.get(&expr.type_name).ok_or_else(|| {
             CompilerError::CodegenError {
-                msg: format!("vtable entry not found for type '{}'", expr.type_name),
+                msg: format!("vtable not found for type '{}'", expr.type_name),
                 span: Some(expr.span),
             }
         })?;
 
+        // Field 0 is the vtable pointer.
         let vtable_slot = self.builder.build_struct_gep(
             struct_ty,
             typed_ptr,
-            0,                  // field 0 is always the vtable pointer
+            0,
             "vtable_slot",
         ).map_err(|e| CompilerError::CodegenError {
             msg: format!("GEP for vtable slot failed: {}", e),
             span: Some(expr.span),
         })?;
 
-        match vtable_opt {
-            Some(vtable) => {
-                // Store the address of the global VTable
-                self.builder.build_store(vtable_slot, vtable.as_pointer_value())
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: format!("store vtable failed: {}", e),
-                        span: Some(expr.span),
-                    })?;
-            }
-            None => {
-                // No methods → store null pointer
-                let null_vtable = struct_ty.ptr_type(inkwell::AddressSpace::default()).const_null();
-                self.builder.build_store(vtable_slot, null_vtable)
-                    .map_err(|e| CompilerError::CodegenError {
-                        msg: format!("store null vtable failed: {}", e),
-                        span: Some(expr.span),
-                    })?;
-            }
-        }
+        // The object struct expects an opaque `i8*`, so we cast the vtable
+        // pointer before storing it.
+        let opaque_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let vtable_ptr = self.builder.build_pointer_cast(
+            vtable_global.as_pointer_value(),
+            opaque_ptr_ty,
+            "vtable_opaque",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: format!("pointer cast for vtable failed: {}", e),
+            span: Some(expr.span),
+        })?;
 
-        // Push a scope for constructor arguments
+        self.builder.build_store(vtable_slot, vtable_ptr)
+            .map_err(|e| CompilerError::CodegenError {
+                msg: format!("store vtable failed: {}", e),
+                span: Some(expr.span),
+            })?;
+
+        // Evaluate constructor arguments and bind them in a fresh scope
+        // so that attribute initializers can reference them.
         self.push_scope();
 
-        // Evaluate constructor arguments and store them in local variables
         for (param_name, arg_expr) in type_def.params.iter().zip(&mut expr.args) {
             let arg_val = arg_expr.accept(self)?;
             let hulk_ty = arg_expr.get_type().ok_or_else(|| CompilerError::CodegenError {
@@ -911,24 +900,26 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             self.insert_var(param_name.clone(), alloca);
         }
 
-        // Initialize each attribute (starting from field 1, field 0 is vtable)
+        // Initialize attributes starting from field 1.
         for (i, attr) in flat.attributes.iter_mut().enumerate() {
             let init_val = attr.init_expr.accept(self)?;
             let field_ptr = self.builder.build_struct_gep(
                 struct_ty,
                 typed_ptr,
-                (i + 1) as u32,              
+                (i + 1) as u32,
                 &format!("field_{}", i),
-            )
-            .map_err(|e| CompilerError::CodegenError {
+            ).map_err(|e| CompilerError::CodegenError {
                 msg: format!("GEP failed: {}", e),
                 span: Some(expr.span),
             })?;
             self.builder.build_store(field_ptr, init_val)
-                .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+                .map_err(|e| CompilerError::CodegenError {
+                    msg: e.to_string(),
+                    span: Some(expr.span),
+                })?;
         }
 
-        // Pop the argument scope and return the typed pointer
+        // Pop the argument scope and return the fully initialized object.
         self.pop_scope();
         Ok(typed_ptr.into())
     }
@@ -960,14 +951,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     /// parameter list expected by `compile_llvm_function` (starting with
     /// `self` followed by the declared method parameters), and delegates
     /// the actual body compilation to that shared helper.
-    ///
-    /// # Conventions
-    /// - The method must have been declared in a previous pass (e.g. during
-    ///   `visit_program`) with the name `{TypeName}.{methodName}`.
-    /// - The first argument of the LLVM function is `%TypeName*` (the
-    ///   receiver object).
-    /// - Subsequent arguments correspond to the method's formal parameters
-    ///   in declaration order.
     ///
     /// # Returns
     /// A dummy `BasicValueEnum` (constant `f64 0.0`) because the return
@@ -1045,8 +1028,8 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     /// Generates LLVM IR for a method call expression (`obj.method(args)`).
     ///
     /// This implements **dynamic dispatch** via the object's virtual method table (vtable).
+    /// The vtable layout is `{ i32 (type_id), ptr (parent_vtable), [N x ptr] (methods) }`.
     fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
-
         // Evaluate the receiver object 
         let obj_ptr = expr.object.accept(self)?.into_pointer_value();
 
@@ -1088,18 +1071,17 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         let vtable_slot = self.builder.build_struct_gep(
             struct_ty,
             obj_ptr,
-            0,                  // field 0 is always the vtable pointer
+            0,                  
             "vtable_slot",
         ).map_err(|e| CompilerError::CodegenError {
             msg: e.to_string(),
             span: Some(expr.span),
         })?;
 
+        // The object stores an opaque i8* pointer to the vtable.
         let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-        let array_ty = ptr_ty.array_type(flat.methods.len() as u32);
-
         let vtable_ptr = self.builder.build_load(
-            array_ty.ptr_type(AddressSpace::default()),
+            ptr_ty,
             vtable_slot,
             "vtable",
         ).map_err(|e| CompilerError::CodegenError {
@@ -1108,11 +1090,32 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         })?
         .into_pointer_value();
 
-        // Index the vtable to get the function pointer 
+        // Access the methods array inside the vtable 
+        let vtable_ty = self.vtable_types.get(type_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("vtable type not found for '{}'", type_name),
+                span: Some(expr.span),
+            }
+        })?;
+
+        // GEP to field 2 (the methods array)
+        let methods_ptr = self.builder.build_struct_gep(
+            *vtable_ty,
+            vtable_ptr,
+            2,                  // field 2 = methods array
+            "methods",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+
+        // Index into the array to get the specific method slot.
+        // methods_ptr points to the array, so we need GEP with [0, vtable_index].
+        let method_array_ty = ptr_ty.array_type(flat.methods.len() as u32);
         let method_slot = unsafe {
             self.builder.build_gep(
-                array_ty,           // the vtable is an array of pointers
-                vtable_ptr,
+                method_array_ty,
+                methods_ptr,
                 &[
                     self.context.i32_type().const_zero(),
                     self.context.i32_type().const_int(fm.vtable_index as u64, false),
@@ -1124,6 +1127,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             span: Some(expr.span),
         })?;
 
+        // Load the function pointer from the slot 
         let raw_fn = self.builder.build_load(
             ptr_ty,
             method_slot,
@@ -1275,6 +1279,154 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(call_site.try_as_basic_value().left().unwrap().into())
     }
 
+    /// Generates LLVM IR for the `is` type-test expression.
+    ///
+    /// `is` performs a **dynamic type check** without any pointer cast.
+    fn visit_is(&mut self, expr: &mut IsExpr) -> Self::Result {
+        // Evaluate the object pointer
+        let obj_val = expr.expr.accept(self)?;
+        let obj_ptr = obj_val.into_pointer_value();
+
+        // Get the target type ID
+        let target_flat = self.flattened_types.get(&expr.type_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("unknown type '{}'", expr.type_name),
+                span: Some(expr.span),
+            })?;
+        let target_id_val = self.context.i32_type().const_int(target_flat.type_id as u64, false);
+
+        // Ensure the runtime function exists and its body is generated
+        self.generate_hulk_instanceof_body()?;
+
+        let instanceof_fn = self.module.get_function("hulk_instanceof").unwrap();
+        let call = self.builder.build_call(instanceof_fn, &[obj_ptr.into(), target_id_val.into()], "is")
+        .map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+        Ok(call.try_as_basic_value().left().unwrap().into())
+    }
+
+    /// Generates LLVM IR for the `as` downcast expression.
+    ///
+    /// `as` performs a **dynamic type check** followed by a **pointer cast**.
+    fn visit_as(&mut self, expr: &mut AsExpr) -> Self::Result {
+        let obj_val = expr.expr.accept(self)?;
+        let obj_ptr = obj_val.into_pointer_value();
+
+        let target_flat = self.flattened_types.get(&expr.type_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("unknown type '{}'", expr.type_name),
+                span: Some(expr.span),
+            })?;
+        let target_id_val = self.context.i32_type().const_int(target_flat.type_id as u64, false);
+
+        self.generate_hulk_instanceof_body()?;
+
+        let instanceof_fn = self.module.get_function("hulk_instanceof").unwrap();
+        let cond = self.builder.build_call(instanceof_fn, &[obj_ptr.into(), target_id_val.into()], "as_check")
+        .map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?
+        .try_as_basic_value().left().unwrap().into_int_value();
+
+        // Create the basic blocks for the success and abort paths.
+        let current_fn = self.current_function
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: "`as` used outside a function".to_string(),
+                span: Some(expr.span),
+            })?;
+
+        let abort_block = self.context.append_basic_block(current_fn, "as.abort");
+        let continue_block = self.context.append_basic_block(current_fn, "as.cont");
+
+        self.builder.build_conditional_branch(cond, continue_block, abort_block)
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // Abort block – runtime error.
+        // We emit a call to `printf` with an error message, then `exit(1)`.
+        self.builder.position_at_end(abort_block);
+
+        // Declare printf and exit 
+        let printf_fn = self.declare_printf();
+        let exit_fn = self.module.get_function("exit").unwrap_or_else(|| {
+            let void_ty = self.context.void_type();
+            let i32_ty = self.context.i32_type();
+            let exit_type = void_ty.fn_type(&[i32_ty.into()], false);
+            self.module.add_function("exit", exit_type, None)
+        });
+
+        // Build the error message string constant.
+        let msg = format!(
+            "Runtime error: invalid downcast to '{}'\n",
+            expr.type_name
+        );
+        let msg_global = self.builder
+            .build_global_string_ptr(&msg, "as_err")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // Call printf(msg).
+        self.builder.build_call(
+            printf_fn,
+            &[msg_global.as_pointer_value().into()],
+            "printf_err",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+
+        // Call exit(1).
+        let exit_code = self.context.i32_type().const_int(1, false);
+        self.builder.build_call(exit_fn, &[exit_code.into()], "")
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // Mark the abort block as unreachable (it never returns).
+        self.builder.build_unreachable()
+            .map_err(|e| CompilerError::CodegenError {
+                msg: e.to_string(),
+                span: Some(expr.span),
+            })?;
+
+        // Continue block – success.
+        // The object is of the correct type, so we bitcast the pointer
+        // to the destination struct type (e.g., `%Perro*`).
+        self.builder.position_at_end(continue_block);
+
+        // Retrieve the destination class name from the type annotation.
+        let cast_type_name = match expr.ty.as_ref().unwrap() {
+            HulkType::Class(name) => name.as_str(),
+            _ => unreachable!("`as` target type must be a class"),
+        };
+
+        let target_llvm_ty = *self.type_structs.get(cast_type_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("unknown target type '{}' in `as`", cast_type_name),
+                span: Some(expr.span),
+            })?;
+
+        // Bitcast: same pointer, new type label.
+        let casted_ptr = self.builder.build_pointer_cast(
+            obj_ptr,
+            target_llvm_ty.ptr_type(AddressSpace::default()),
+            "downcast",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(expr.span),
+        })?;
+
+        Ok(casted_ptr.into())
+    }
+
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result {
         todo!()
     }
@@ -1286,13 +1438,5 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {
         todo!()
     }
-
-    fn visit_is(&mut self, _expr: &mut IsExpr) -> Self::Result {
-    todo!()
-}
-
-fn visit_as(&mut self, _expr: &mut AsExpr) -> Self::Result {
-    todo!()
-}
 
 }
