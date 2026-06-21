@@ -1,19 +1,20 @@
-type Bird {
-    name = "bird";
+type A {
+    // ...
 }
-type Plane {
-    name = "plane";
-}
-type Superman {
-    name = "superman";
-}
-{
-    let x = new Superman() in
-    print(
-        if (x is Bird) "It's bird!"
-        elif (x is Plane) "It's a plane!"
-        else "No, it's Superman!"
-    );
 
-    let y: Plane = x as Plane in  print(y.name);
+type B inherits A {
+    // ...
 }
+
+type C inherits A {
+    // ...
+}
+
+let x : A = if (rand() < 0.5) new B() else new C() in
+    if (x is B)
+        let y : B = x as B in {
+            // you can use y with static type B
+        }
+    else {
+        // x cannot be downcasted to B
+    }

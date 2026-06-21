@@ -311,6 +311,18 @@ impl TypeChecker {
                         }
                         resolve_expr(unifier, &mut a.object);
                     }
+                    Expr::Is(is) => {
+                        if let Some(ty) = &is.ty {
+                            is.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut is.expr);
+                    }
+                    Expr::As(as_expr) => {
+                        if let Some(ty) = &as_expr.ty {
+                            as_expr.ty = Some(unifier.resolve(ty));
+                        }
+                        resolve_expr(unifier, &mut as_expr.expr);
+                    }
                 }
             }
 
@@ -446,125 +458,121 @@ impl TypeChecker {
             }
         }
 
-        fn flatten_type(&mut self, type_name: &str) -> FlattenedType {
-            // Si ya está aplanado, devolver una copia
-            if let Some(flattened) = self.flattened_types.get(type_name) {
-                return flattened.clone();
-            }
-
-            // Clonar TypeInfo para no mantener préstamos
-            let type_info = self.types.get(type_name)
-                .expect("TypeInfo not found")
-                .clone();
-            let parent_name = type_info.parent.clone();
-
-            // Aplanar recursivamente el padre (esto puede mutar self)
-            let parent_flattened = if let Some(ref pname) = parent_name {
-                self.flatten_type(pname)
-            } else {
-                FlattenedType::default()
-            };
-
-            // Clonar el TypeDef original (solo lectura)
-            let type_def = self.type_defs.get(type_name)
-                .expect("TypeDef not found")
-                .clone();
-
-            // --- Atributos: heredados + propios (sin duplicados) ---
-            let mut attributes = parent_flattened.attributes.clone();
-            for attr in &type_def.attributes {
-                if attributes.iter().any(|a| a.name == attr.name) {
-                    self.add_type_error(
-                        format!("Attribute '{}' already defined in parent", attr.name),
-                        attr.span,
-                    );
-                } else {
-                    attributes.push(attr.clone());
-                }
-            }
-
-                    // --- Métodos y VTable ---
-            // --- Métodos y VTable ---
-            let mut methods = parent_flattened.methods.clone();
-
-            for method in &type_def.methods {
-                if let Some(existing_pos) = methods.iter().position(|m| {
-                    m.method.name == method.name && m.method.params.len() == method.params.len()
-                }) {
-                    let old_index = methods[existing_pos].vtable_index;
-                    methods[existing_pos] = FlattenedMethod {
-                        method: method.clone(),
-                        vtable_index: old_index,
-                        defining_type: type_def.name.clone(),
-                    };
-                } else {
-                    let new_index = methods.len(); // ← aquí está la clave
-                    methods.push(FlattenedMethod {
-                        method: method.clone(),
-                        vtable_index: new_index,
-                        defining_type: type_def.name.clone(),
-                    });
-                }
-            }
-
-            // --- Parámetros efectivos y argumentos para el constructor padre ---
-            let (params, mut parent_init_args) = if type_def.params.is_empty() {
-                // Sin parámetros propios → heredar los del padre
-                (parent_flattened.params.clone(), None)
-            } else {
-                // Con parámetros propios → son los efectivos
-                let own_params: Vec<(String, HulkType)> = type_def.params
-                    .iter()
-                    .zip(type_def.param_types.iter())
-                    .map(|(name, ty)| (name.clone(), ty.clone()))
-                    .collect();
-                let args = type_def.parent.as_ref().and_then(|p| {
-                    if p.args.is_empty() { None } else { Some(p.args.clone()) }
-                });
-                (own_params, args)
-            };
-
-            // Verificar que los argumentos del constructor padre coincidan en número y tipo
-            if let Some(args) = &mut parent_init_args {
-                if let Some(ref pname) = parent_name {
-                    // Clonar los parámetros del padre para no mantener préstamo
-                    let parent_params = self.flattened_types
-                        .get(pname)
-                        .expect("Parent not flattened")
-                        .params
-                        .clone();
-
-                    if args.len() != parent_params.len() {
-                        self.add_type_error(
-                            format!("Parent constructor expects {} arguments, got {}", parent_params.len(), args.len()),
-                            type_def.span,
-                        );
-                    } else {
-                        // Unificar tipos de cada argumento con el parámetro correspondiente
-                        for (arg, (_, param_ty)) in args.iter_mut().zip(parent_params.iter()) {
-                            let arg_ty = arg.accept(self);
-                            if let Err(msg) = self.unifier.unify(&arg_ty, param_ty) {
-                                self.add_type_error(msg, arg.span());
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Construir el objeto aplanado
-            let flattened = FlattenedType {
-                attributes,
-                methods,
-                parent_name: parent_name.clone(),
-                params,
-                parent_init_args,
-            };
-
-            // Guardar en el mapa
-            self.flattened_types.insert(type_name.to_string(), flattened.clone());
-            flattened
+    fn flatten_type(&mut self, type_name: &str) -> FlattenedType {
+        if let Some(flattened) = self.flattened_types.get(type_name) {
+            return flattened.clone();
         }
 
+        let type_info = self.types.get(type_name)
+            .expect("TypeInfo not found")
+            .clone();
+        let parent_name = type_info.parent.clone();
+
+        let parent_flattened = if let Some(ref pname) = parent_name {
+            self.flatten_type(pname)
+        } else {
+            FlattenedType::default()
+        };
+
+        let type_def = self.type_defs.get(type_name)
+            .expect("TypeDef not found")
+            .clone();
+
+        // --- Determinar parámetros efectivos y argumentos del padre ---
+        let (effective_params, parent_init_args) = if type_def.params.is_empty() {
+    // Sin parámetros propios: heredar los del padre (ya resueltos en parent_flattened)
+    (parent_flattened.params.clone(), None)
+    } else {
+        // Con parámetros propios: determinar si hay especialización
+        let own_params: Vec<(String, HulkType)> = type_def.params
+            .iter()
+            .zip(type_def.param_types.iter())
+            .map(|(name, ty)| (name.clone(), self.unifier.resolve(ty)))  // <-- RESOLVER aquí
+            .collect();
+
+        let has_specialization = type_def.parent.as_ref()
+            .map(|p| !p.args.is_empty())
+            .unwrap_or(false);
+
+        if has_specialization {
+            let args = type_def.parent.as_ref().unwrap().args.clone();
+            (own_params, Some(args))
+        } else {
+            let mut combined = parent_flattened.params.clone();
+            combined.extend(own_params);
+            (combined, None)
+        }
+    };
+        // --- Construir atributos efectivos ---
+        let mut effective_attributes = Vec::new();
+
+        // Si hay especialización, transformar los atributos del padre
+        if let Some(args) = &parent_init_args {
+            // Construir mapa de sustitución: parámetro del padre -> expresión
+            let mut subst = HashMap::new();
+            for ((param_name, _), arg_expr) in parent_flattened.params.iter().zip(args.iter()) {
+                subst.insert(param_name.clone(), arg_expr.clone());
+            }
+
+            // Transformar cada atributo del padre
+            for attr in &parent_flattened.attributes {
+                let mut new_attr = attr.clone();
+                // Sustituir en la expresión de inicialización
+                self.substitute_expr(&mut new_attr.init_expr, &subst);
+                effective_attributes.push(new_attr);
+            }
+        } else {
+            // Sin especialización: copiar atributos del padre tal cual
+            effective_attributes.extend(parent_flattened.attributes.clone());
+        }
+
+        // Añadir atributos propios del hijo (no se sustituyen, usan sus propias expresiones)
+        for attr in &type_def.attributes {
+            // Verificar duplicados
+            if effective_attributes.iter().any(|a| a.name == attr.name) {
+                self.add_type_error(
+                    format!("Attribute '{}' already defined in parent", attr.name),
+                    attr.span,
+                );
+            } else {
+                effective_attributes.push(attr.clone());
+            }
+        }
+
+        // --- Construir métodos (igual que antes) ---
+        let mut methods = parent_flattened.methods.clone();
+        for method in &type_def.methods {
+            if let Some(existing_pos) = methods.iter().position(|m| {
+                m.method.name == method.name && m.method.params.len() == method.params.len()
+            }) {
+                let old_index = methods[existing_pos].vtable_index;
+                methods[existing_pos] = FlattenedMethod {
+                    method: method.clone(),
+                    vtable_index: old_index,
+                    defining_type: type_def.name.clone(),
+                };
+            } else {
+                let new_index = methods.len();
+                methods.push(FlattenedMethod {
+                    method: method.clone(),
+                    vtable_index: new_index,
+                    defining_type: type_def.name.clone(),
+                });
+            }
+        }
+
+        // --- Construir el FlattenedType final ---
+        let flattened = FlattenedType {
+            attributes: effective_attributes,
+            methods,
+            parent_name: parent_name.clone(),
+            params: effective_params,
+            parent_init_args, // ya lo tenemos
+        };
+
+        self.flattened_types.insert(type_name.to_string(), flattened.clone());
+        flattened
+    }
 
     pub fn get_type_def(&self, name: &str) -> Option<&TypeDef> {
         self.type_defs.get(name)
@@ -773,6 +781,69 @@ impl TypeChecker {
             _ => Some(HulkType::Object) // Por defecto Object
         }
     }
+
+    fn substitute_expr(&self, expr: &mut Expr, subst: &HashMap<String, Box<Expr>>) {
+        match expr {
+            Expr::Variable(var) => {
+                if let Some(replacement) = subst.get(&var.name) {
+                    // Reemplazar la variable por la expresión clonada
+                    *expr = replacement.as_ref().clone();
+                }
+            }
+            Expr::BinaryOp(b) => {
+                self.substitute_expr(&mut b.left, subst);
+                self.substitute_expr(&mut b.right, subst);
+            }
+            Expr::Call(call) => {
+                for arg in &mut call.args {
+                    self.substitute_expr(arg, subst);
+                }
+            }
+            Expr::UnaryOp(u) => {
+                self.substitute_expr(&mut u.expr, subst);
+            }
+            Expr::Let(let_expr) => {
+                for (_, _, init) in &mut let_expr.bindings {
+                    self.substitute_expr(init, subst);
+                }
+                self.substitute_expr(&mut let_expr.body, subst);
+            }
+            Expr::DestructiveAssign(a) => {
+                self.substitute_expr(&mut a.lhs, subst);
+                self.substitute_expr(&mut a.value, subst);
+            }
+            Expr::Block(b) => {
+                for e in &mut b.expressions {
+                    self.substitute_expr(e, subst);
+                }
+            }
+            Expr::If(i) => {
+                self.substitute_expr(&mut i.condition, subst);
+                self.substitute_expr(&mut i.then_branch, subst);
+                self.substitute_expr(&mut i.else_branch, subst);
+            }
+            Expr::While(w) => {
+                self.substitute_expr(&mut w.condition, subst);
+                self.substitute_expr(&mut w.body, subst);
+            }
+            Expr::New(n) => {
+                for arg in &mut n.args {
+                    self.substitute_expr(arg, subst);
+                }
+            }
+            Expr::MethodCall(m) => {
+                self.substitute_expr(&mut m.object, subst);
+                for arg in &mut m.args {
+                    self.substitute_expr(arg, subst);
+                }
+            }
+            Expr::AttributeAccess(a) => {
+                self.substitute_expr(&mut a.object, subst);
+            }
+            // Los nodos que no contienen subexpresiones (Number, String, Bool, Const, Self, Base) no necesitan acción.
+            _ => {}
+        }
+    }
 }
 
 
@@ -857,8 +928,9 @@ impl Visitor for BaseDetector {
     // Asegúrate de que también tengas los de protocolo (ya los tenías)
     fn visit_protocol_def(&mut self, _proto: &mut ProtocolDef) -> Self::Result {}
     fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {}
-    
-    
+    fn visit_is(&mut self, _method: &mut IsExpr) -> Self::Result {}
+    fn visit_as(&mut self, _method: &mut AsExpr) -> Self::Result {}
+
 }
 
 impl Visitor for TypeChecker {
@@ -1491,9 +1563,17 @@ impl Visitor for TypeChecker {
             }
         }
 
-        self.exit_scope();  // salir del ámbito de parámetros
+        // *** NUEVO: Visitar argumentos del constructor padre MIENTRAS LOS PARÁMETROS AÚN ESTÁN EN EL ÁMBITO ***
+        if let Some(parent) = &mut type_def.parent {
+            for arg in &mut parent.args {
+                arg.accept(self);
+            }
+        }
 
-        // Procesar métodos
+        // Ahora sí, salir del ámbito de parámetros
+        self.exit_scope();
+
+        // Procesar métodos (ellos crean su propio ámbito)
         for method in &mut type_def.methods {
             method.accept(self);
         }
@@ -1722,29 +1802,30 @@ impl Visitor for TypeChecker {
         }
     }
     
-    
-    
     fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
         let obj_ty = expr.object.accept(self);
-        // Verificar que el acceso sea permitido (solo si el objeto es `self` y estamos dentro de un método)
-        let is_self = match &*expr.object {
-            Expr::SelfExpr(_) => true,
-            _ => false,
+        let class_name = match obj_ty {
+            HulkType::Class(name) => name,
+            HulkType::Protocol(_) => {
+                self.add_type_error("Attribute access on protocol type not supported".to_string(), expr.span);
+                return HulkType::Error;
+            }
+            _ => {
+                self.add_type_error("Attribute access only allowed on class instances".to_string(), expr.span);
+                return HulkType::Error;
+            }
         };
-        if !is_self {
-            self.add_type_error("Attribute access is only allowed on 'self'".to_string(), expr.span);
-            return HulkType::Error;
-        }
-        // Buscar el atributo en el tipo actual
-        if let Some(type_name) = &self.current_type {
-            if let Some(type_info) = self.types.get(type_name) {
-                if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
-                    expr.ty = Some(attr_ty.clone());
-                    return attr_ty.clone();
-                }
+        // Buscar en el tipo (herencia ya está incluida en TypeInfo)
+        if let Some(type_info) = self.types.get(&class_name) {
+            if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
+                expr.ty = Some(attr_ty.clone());
+                return attr_ty.clone();
             }
         }
-        self.add_type_error(format!("Attribute '{}' not found", expr.attribute), expr.span);
+        self.add_type_error(
+            format!("Attribute '{}' not found in type '{}'", expr.attribute, class_name),
+            expr.span,
+        );
         HulkType::Error
     }
     
@@ -1809,109 +1890,167 @@ impl Visitor for TypeChecker {
     }
     
     fn visit_base(&mut self, expr: &mut BaseExpr) -> Self::Result {
-    let current_type_name = match self.current_type.as_ref() {
-        Some(name) => name,
-        None => {
-            self.add_type_error("'base' used outside of a type".to_string(), expr.span);
-            expr.ty = Some(HulkType::Error);
-            return HulkType::Error;
-        }
-    };
-
-    let type_info = match self.types.get(current_type_name) {
-        Some(info) => info,
-        None => {
-            self.add_type_error(format!("Type '{}' not found", current_type_name), expr.span);
-            expr.ty = Some(HulkType::Error);
-            return HulkType::Error;
-        }
-    };
-
-    let parent_name = match type_info.parent.as_ref() {
-        Some(name) => name,
-        None => {
-            self.add_type_error(format!("Type '{}' has no parent", current_type_name), expr.span);
-            expr.ty = Some(HulkType::Error);
-            return HulkType::Error;
-        }
-    };
-
-    let method_name = match self.current_method.as_ref() {
-        Some(name) => name,
-        None => {
-            self.add_type_error("base used outside method".to_string(), expr.span);
-            expr.ty = Some(HulkType::Error);
-            return HulkType::Error;
-        }
-    };
-
-    let current_params = match self.current_method_params.as_ref() {
-        Some(params) => params,
-        None => {
-            self.add_type_error("base used without method params".to_string(), expr.span);
-            expr.ty = Some(HulkType::Error);
-            return HulkType::Error;
-        }
-    };
-
-    let parent_info = match self.types.get(parent_name) {
-        Some(info) => info,
-        None => {
-            self.add_type_error(format!("Parent type '{}' not found", parent_name), expr.span);
-            expr.ty = Some(HulkType::Error);
-            return HulkType::Error;
-        }
-    };
-
-    // Buscar el método en el padre con el MISMO nombre
-    match parent_info.methods.get(method_name) {
-        Some(parent_method) => {
-            // Verificar cantidad de parámetros
-            if parent_method.param_types.len() != current_params.len() {
-                self.add_type_error(
-                    format!(
-                        "Method '{}' in parent '{}' has {} parameters, but current method has {}",
-                        method_name,
-                        parent_name,
-                        parent_method.param_types.len(),
-                        current_params.len()
-                    ),
-                    expr.span,
-                );
+        let current_type_name = match self.current_type.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("'base' used outside of a type".to_string(), expr.span);
                 expr.ty = Some(HulkType::Error);
                 return HulkType::Error;
             }
+        };
 
-            // Verificar tipos de parámetros
-            for (i, (parent_p, current_p)) in parent_method.param_types.iter()
-                .zip(current_params.iter()).enumerate() 
-            {
-                if let Err(msg) = self.unifier.unify(parent_p, current_p) {
+        let type_info = match self.types.get(current_type_name) {
+            Some(info) => info,
+            None => {
+                self.add_type_error(format!("Type '{}' not found", current_type_name), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let parent_name = match type_info.parent.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error(format!("Type '{}' has no parent", current_type_name), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let method_name = match self.current_method.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("base used outside method".to_string(), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let current_params = match self.current_method_params.as_ref() {
+            Some(params) => params,
+            None => {
+                self.add_type_error("base used without method params".to_string(), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        let parent_info = match self.types.get(parent_name) {
+            Some(info) => info,
+            None => {
+                self.add_type_error(format!("Parent type '{}' not found", parent_name), expr.span);
+                expr.ty = Some(HulkType::Error);
+                return HulkType::Error;
+            }
+        };
+
+        // Buscar el método en el padre con el MISMO nombre
+        match parent_info.methods.get(method_name) {
+            Some(parent_method) => {
+                // Verificar cantidad de parámetros
+                if parent_method.param_types.len() != current_params.len() {
                     self.add_type_error(
-                        format!("Parameter {} type mismatch with parent: {}", i + 1, msg),
+                        format!(
+                            "Method '{}' in parent '{}' has {} parameters, but current method has {}",
+                            method_name,
+                            parent_name,
+                            parent_method.param_types.len(),
+                            current_params.len()
+                        ),
                         expr.span,
                     );
                     expr.ty = Some(HulkType::Error);
                     return HulkType::Error;
                 }
-            }
 
-            // Todo ok: usar el tipo de retorno del padre
-            let ret_ty = self.unifier.resolve(&parent_method.return_type);
-            expr.ty = Some(ret_ty.clone());
-            expr.base_type = Some(parent_name.clone());
-            expr.method_name = Some(method_name.clone());
-            ret_ty
+                // Verificar tipos de parámetros
+                for (i, (parent_p, current_p)) in parent_method.param_types.iter()
+                    .zip(current_params.iter()).enumerate() 
+                {
+                    if let Err(msg) = self.unifier.unify(parent_p, current_p) {
+                        self.add_type_error(
+                            format!("Parameter {} type mismatch with parent: {}", i + 1, msg),
+                            expr.span,
+                        );
+                        expr.ty = Some(HulkType::Error);
+                        return HulkType::Error;
+                    }
+                }
+
+                // Todo ok: usar el tipo de retorno del padre
+                let ret_ty = self.unifier.resolve(&parent_method.return_type);
+                expr.ty = Some(ret_ty.clone());
+                expr.base_type = Some(parent_name.clone());
+                expr.method_name = Some(method_name.clone());
+                ret_ty
+            }
+            None => {
+                self.add_type_error(
+                    format!("Method '{}' not found in parent type '{}'", method_name, parent_name),
+                    expr.span,
+                );
+                expr.ty = Some(HulkType::Error);
+                HulkType::Error
+            }
         }
-        None => {
+    }
+        
+    fn visit_is(&mut self, expr: &mut IsExpr) -> Self::Result {
+        // 1. Obtener el tipo de la expresión
+        let expr_ty = expr.expr.accept(self);
+
+        // 2. Resolver el tipo dado (convertir UserDefined a Class o Protocol)
+        let type_given = self.resolve_annotation(&HulkType::UserDefined(expr.type_name.clone()));
+
+        // 3. Si el tipo no se pudo resolver (error), reportar y continuar
+        if type_given == HulkType::Error {
             self.add_type_error(
-                format!("Method '{}' not found in parent type '{}'", method_name, parent_name),
+                format!("Type '{}' not found", expr.type_name),
+                expr.span,
+            );
+            expr.ty = Some(HulkType::Boolean);
+            return HulkType::Boolean;
+        }
+
+        // 4. Asignar tipo Boolean al AST
+        expr.ty = Some(HulkType::Boolean);
+        HulkType::Boolean
+    }
+
+    fn visit_as(&mut self, expr: &mut AsExpr) -> Self::Result {
+        // 1. Obtener el tipo de la expresión
+        let expr_ty = expr.expr.accept(self);
+
+        // 2. Resolver el tipo dado
+        let type_given = self.resolve_annotation(&HulkType::UserDefined(expr.type_name.clone()));
+
+        if type_given == HulkType::Error {
+            self.add_type_error(
+                format!("Type '{}' not found", expr.type_name),
                 expr.span,
             );
             expr.ty = Some(HulkType::Error);
-            HulkType::Error
+            return HulkType::Error;
         }
+
+        // 3. Verificar que el downcast sea posible estáticamente:
+        //    el tipo dado debe ser subtipo del tipo estático de la expresión.
+        if !self.conforms_to(&type_given, &expr_ty) {
+            self.add_type_error(
+                format!(
+                    "Cannot downcast expression of type {:?} to type {:?}",
+                    expr_ty, type_given
+                ),
+                expr.span,
+            );
+            // Aunque haya error, asignamos el tipo dado para no romper el análisis
+            expr.ty = Some(type_given.clone());
+            return type_given;
+        }
+
+        // 4. Asignar el tipo dado como resultado
+        expr.ty = Some(type_given.clone());
+        type_given
     }
-}
-        
+
 }
