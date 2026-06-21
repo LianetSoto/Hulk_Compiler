@@ -64,6 +64,8 @@ pub enum Token {
     Is,
     As,
 
+    T,
+
     // Arithmetic built‑in functions
     Sin,
     Cos,
@@ -163,6 +165,7 @@ impl fmt::Display for Token {
             Token::RArrow=>  write!(f, "->"),
             Token::Is => write!(f, "is"),
             Token::As => write!(f, "as"),
+            Token::T => write!(f, "T"),
         }
     }
 }
