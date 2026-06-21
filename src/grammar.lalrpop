@@ -143,6 +143,12 @@ MethodParams: Vec<MethodParam> = {
 // Methods
 Method: Method = {
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
+        let ret = ret_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         Method {
             name,
             params,
@@ -150,10 +156,16 @@ Method: Method = {
             body,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ret_ann,
+            ty_annotation: ret,
         }
     },
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
+        let ret = ret_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         Method {
             name,
             params,
@@ -161,7 +173,7 @@ Method: Method = {
             body,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ret_ann,
+            ty_annotation: ret,
         }
     },
 };
@@ -217,24 +229,36 @@ FunctionParams: Vec<Params> = {
 
 FunctionDef: FunctionDef = {
     <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
+        let ret = ret_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ret_ann,
+            ty_annotation: ret,
             is_generic: false,
         }
     },
     <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ann:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
+        let ret = ret_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         FunctionDef {
             name,
             params,
             body,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ret_ann,
+            ty_annotation: ret,
             is_generic: false,
         }
     },
@@ -285,10 +309,16 @@ TypeDef: TypeDef = {
 //Protocols
 ProtocolMethod: ProtocolMethod = {
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> ";" <end:@R> => {
+        let ret = ret_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         ProtocolMethod {
             name,
             params,
-            return_ty: ret_ann,
+            return_ty: ret,
             span: Span::new(start, end),
         }
     }
