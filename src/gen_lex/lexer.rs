@@ -113,6 +113,8 @@ impl Lexer {
                 }
                 let token_value: String = chars[start..i].iter().collect();
                 let lexer_token = match token_value.as_str() {
+                    "is" => LexerToken::Is,
+                    "as" => LexerToken::As,
                     "let" => LexerToken::Let,
                     "in" => LexerToken::In,
                     "if" => LexerToken::If,
@@ -242,6 +244,7 @@ impl Lexer {
                     "Exp" => LexerToken::Exp,
                     "Rand" => LexerToken::Rand,
                     "Arrow" => LexerToken::Arrow,
+                    "RArrow" => LexerToken::RArrow,
                     "Eq" => LexerToken::Eq,
                     "Assign" => LexerToken::Assign,
                     "EqEq" => LexerToken::EqEq,
@@ -270,6 +273,8 @@ impl Lexer {
                     "New" => LexerToken::New,
                     "protocol" => LexerToken::Protocol,
                     "extends" => LexerToken::Extends,
+                    "is" => LexerToken::Is,
+                    "as" => LexerToken::As,
                     _ => {
                         // For unknown, perhaps skip or error
                         i += 1;

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, write};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -55,10 +55,14 @@ pub enum Token {
     Protocol,
     Extends,
 
+    RArrow,
 
     // Constants
     Pi,
     E,
+
+    Is,
+    As,
 
     // Arithmetic built‑in functions
     Sin,
@@ -156,6 +160,9 @@ impl fmt::Display for Token {
             Token::Protocol => write!(f, "protocol"),
             Token::Extends => write!(f, "extends"),
             Token::Error =>  write!(f, "error"),
+            Token::RArrow=>  write!(f, "->"),
+            Token::Is => write!(f, "is"),
+            Token::As => write!(f, "as"),
         }
     }
 }
