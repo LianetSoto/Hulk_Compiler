@@ -91,6 +91,7 @@ impl MonomorphizationPass {
             HulkType::UserDefined(name) => format!("UserDefined{}", name),
             HulkType::Var(id) => format!("Var{}", id),
             HulkType::Error => "Error".to_string(),
+            HulkType::GenericPlaceholder => todo!(),
         }
     }
 
