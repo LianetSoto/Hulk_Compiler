@@ -1287,4 +1287,12 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         todo!()
     }
 
+    fn visit_is(&mut self, _expr: &mut IsExpr) -> Self::Result {
+    todo!()
+}
+
+fn visit_as(&mut self, _expr: &mut AsExpr) -> Self::Result {
+    todo!()
+}
+
 }

@@ -242,4 +242,14 @@ impl Visitor for MonomorphizationPass {
     fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result {
         todo!()
     }
+
+
+    fn visit_is(&mut self, method: &mut IsExpr) -> Self::Result {
+        todo!()
+    }
+
+
+    fn visit_as(&mut self, method: &mut AsExpr) -> Self::Result {
+        todo!()
+    }
 }
