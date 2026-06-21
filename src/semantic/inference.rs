@@ -42,6 +42,8 @@ impl Unifier {
         (HulkType::Boolean, HulkType::Boolean) => Ok(()),
         (HulkType::Class(c1), HulkType::Class(c2)) if c1 == c2 => Ok(()),
         (HulkType::Protocol(p1), HulkType::Protocol(p2)) if p1 == p2 => Ok(()),
+        (HulkType::Var(id), HulkType::Protocol(_)) => self.bind(*id, b),
+        (HulkType::Protocol(_), HulkType::Var(id)) => self.bind(*id, a),
         (HulkType::Object, HulkType::Object) => Ok(()),
         // Si Object es supertipo, podrías permitir (sub, Object)
         _ => Err(format!("Cannot unify {:?} and {:?}", a, b)),

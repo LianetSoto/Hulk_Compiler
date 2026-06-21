@@ -21,6 +21,7 @@ struct TypeInfo {
     attributes: HashMap<String, HulkType>,      // nombre -> tipo (inferido)
     attr_order: Vec<String>,
     methods: HashMap<String, MethodInfo>,       // nombre -> info del método
+    own_attributes: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -130,6 +131,7 @@ impl TypeChecker {
                 attributes: HashMap::new(),
                 attr_order: vec![],
                 methods: HashMap::new(),
+                own_attributes: HashSet::new(), 
             });
             // También insertar un TypeDef ficticio para Object
             self.type_defs.insert("Object".to_string(), TypeDef {
@@ -348,11 +350,11 @@ impl TypeChecker {
         // Resolver tipos en funciones
         for func in &mut program.functions {
             if let Some(ty) = &func.ty {
-                func.ty = Some(self.unifier.resolve(ty));
+                func.ty = Some(self.resolve_and_normalize(ty));
             }
             for param in &mut func.params {
                 if let Some(ty) = &param.ty {
-                    param.ty = Some(self.unifier.resolve(ty));
+                    param.ty = Some(self.resolve_and_normalize(ty));
                 }
             }
             resolve_expr(&self.unifier, &mut func.body);
@@ -361,11 +363,11 @@ impl TypeChecker {
         // Resolver tipos en definiciones de tipos
         for type_def in &mut program.types {
             if let Some(ty) = &type_def.ty {
-                type_def.ty = Some(self.unifier.resolve(ty));
+                type_def.ty = Some(self.resolve_and_normalize(ty));
             }
             for attr in &mut type_def.attributes {
                 if let Some(ty) = &attr.ty {
-                    attr.ty = Some(self.unifier.resolve(ty));
+                    attr.ty = Some(self.resolve_and_normalize(ty));
                 }
                 if let Some(ann) = &attr.ty_annotation {
                     attr.ty_annotation = Some(self.unifier.resolve(ann));
@@ -374,11 +376,11 @@ impl TypeChecker {
             }
             for method in &mut type_def.methods {
                 if let Some(ty) = &method.ty {
-                    method.ty = Some(self.unifier.resolve(ty));
+                    method.ty = Some(self.resolve_and_normalize(ty));
                 }
                 for param in &mut method.params {
                     if let Some(ty) = &param.ty {
-                        param.ty = Some(self.unifier.resolve(ty));
+                        param.ty = Some(self.resolve_and_normalize(ty));
                     }
                     if let Some(ann) = &param.ty_annotation {
                         param.ty_annotation = Some(self.unifier.resolve(ann));
@@ -506,7 +508,7 @@ impl TypeChecker {
             let own_params: Vec<(String, HulkType)> = type_def.params
                 .iter()
                 .zip(type_def.param_types.iter())
-                .map(|(name, ty)| (name.clone(), self.unifier.resolve(ty)))  // <-- RESOLVER aquí
+                .map(|(name, ty)| (name.clone(), Self::resolve_type_for_flatten(&self.unifier, ty)))
                 .collect();
 
             let has_specialization = type_def.parent.as_ref()
@@ -1004,37 +1006,51 @@ impl TypeChecker {
 
         // Resolver cada FlattenedType
         for (_, flat) in self.flattened_types.iter_mut() {
-            // Resolver tipos de parámetros
             flat.params = flat.params.iter()
-                .map(|(name, ty)| (name.clone(), self.unifier.resolve(ty)))
+                .map(|(name, ty)| (name.clone(), Self::resolve_type_for_flatten(&self.unifier, ty)))
                 .collect();
 
-            // Resolver tipos de atributos y sus expresiones
             for attr in &mut flat.attributes {
                 if let Some(ty) = &attr.ty {
-                    attr.ty = Some(self.unifier.resolve(ty));
+                    attr.ty = Some(Self::resolve_type_for_flatten(&self.unifier, ty));
                 }
                 if let Some(ann) = &attr.ty_annotation {
-                    attr.ty_annotation = Some(self.unifier.resolve(ann));
+                    attr.ty_annotation = Some(Self::resolve_type_for_flatten(&self.unifier, ann));
                 }
                 resolve_expr(&self.unifier, &mut attr.init_expr);
             }
 
-            // Resolver tipos de métodos (si los hay, aunque los flattened methods contienen Method con ty y params)
             for method in &mut flat.methods {
                 if let Some(ty) = &method.method.ty {
-                    method.method.ty = Some(self.unifier.resolve(ty));
+                    method.method.ty = Some(Self::resolve_type_for_flatten(&self.unifier, ty));
                 }
                 for param in &mut method.method.params {
                     if let Some(ty) = &param.ty {
-                        param.ty = Some(self.unifier.resolve(ty));
+                        param.ty = Some(Self::resolve_type_for_flatten(&self.unifier, ty));
                     }
                     if let Some(ann) = &param.ty_annotation {
-                        param.ty_annotation = Some(self.unifier.resolve(ann));
+                        param.ty_annotation = Some(Self::resolve_type_for_flatten(&self.unifier, ann));
                     }
                 }
                 resolve_expr(&self.unifier, &mut method.method.body);
             }
+        }
+    }
+
+    fn resolve_type_for_flatten(unifier: &Unifier, ty: &HulkType) -> HulkType {
+        let resolved = unifier.resolve(ty);
+        if let HulkType::Object = resolved {
+            HulkType::Class("Object".to_string())
+        } else {
+            resolved
+        }
+    }
+
+    fn resolve_and_normalize(&self, ty: &HulkType) -> HulkType {
+        let resolved = self.unifier.resolve(ty);
+        match resolved {
+            HulkType::Object => HulkType::Class("Object".to_string()),
+            _ => resolved,
         }
     }
 }
@@ -1384,33 +1400,43 @@ impl Visitor for TypeChecker {
         self.enter_scope();
         for (name, ann, init_expr) in &mut expr.bindings {
             let init_ty = init_expr.accept(self);
+            let mut var_ty = init_ty.clone();
             if let Some(ann_ty) = ann {
                 let resolved_ann = self.resolve_annotation(ann_ty);
-                // Verificar conformidad (debe cumplirse)
                 if !self.conforms_to(&init_ty, &resolved_ann) {
                     self.add_type_error(
                         format!("Cannot initialize variable of type {:?} with value of type {:?}", resolved_ann, init_ty),
                         init_expr.span(),
                     );
-                    self.declare_var(name.clone(), HulkType::Error);
+                    var_ty = HulkType::Error;
                 } else {
-                    // IMPORTANTE: si init_ty es más específico que resolved_ann,
-                    // declaramos la variable con init_ty (el tipo real)
-                    // Para ello, resolvemos init_ty para asegurarnos de que no queden variables sin resolver.
-                    let final_ty = if self.conforms_to(&init_ty, &resolved_ann) {
-                        // init_ty conforma a la anotación, pero puede ser más específico.
-                        // Usamos init_ty (resuelto) como tipo de la variable.
-                        self.unifier.resolve(&init_ty)
+                    // Si la anotación es Protocol y init_ty es Class que implementa el protocolo,
+                    // reemplazar la anotación por la clase concreta.
+                    if let HulkType::Protocol(proto_name) = &resolved_ann {
+                        if let HulkType::Class(class_name) = &init_ty {
+                            if self.type_conforms_to_protocol(class_name, proto_name) {
+                                // Reemplazar la anotación en el AST
+                                *ann = Some(HulkType::Class(class_name.clone()));
+                                var_ty = init_ty.clone();
+                            } else {
+                                self.add_type_error(
+                                    format!("Type '{}' does not implement protocol '{}'", class_name, proto_name),
+                                    expr.span,
+                                );
+                                var_ty = HulkType::Error;
+                            }
+                        } else {
+                            // La expresión no es una clase concreta; no podemos resolver
+                            var_ty = resolved_ann; // mantiene Protocol
+                        }
                     } else {
-                        resolved_ann
-                    };
-                    self.declare_var(name.clone(), final_ty);
+                        var_ty = resolved_ann;
+                    }
                 }
             } else {
-                // Sin anotación, usar init_ty tal cual (resuelto)
-                let final_ty = self.unifier.resolve(&init_ty);
-                self.declare_var(name.clone(), final_ty);
+                var_ty = self.unifier.resolve(&init_ty);
             }
+            self.declare_var(name.clone(), var_ty);
         }
         let body_ty = expr.body.accept(self);
         self.exit_scope();
@@ -1624,6 +1650,7 @@ impl Visitor for TypeChecker {
             attributes: HashMap::new(),
             attr_order: Vec::new(),
             methods: HashMap::new(),
+            own_attributes: HashSet::new(), 
         };
 
         // Si hay un tipo padre, heredar sus atributos y métodos
@@ -1650,12 +1677,12 @@ impl Visitor for TypeChecker {
             self.declare_var(param_name.clone(), var_ty.clone());
         }
 
-        // Procesar atributos
+        // Procesar atributos explícitos (visit_attribute los añade a attributes)
         for attr in &mut type_def.attributes {
             attr.accept(self);
         }
 
-        // Crear atributos implícitos para parámetros que no tienen atributos explícitos
+        // Crear atributos implícitos para parámetros sin atributo explícito
         if let Some(current_type) = &self.current_type {
             if let Some(current_type_info) = self.types.get_mut(current_type) {
                 for (param_idx, param_name) in type_def.params.iter().enumerate() {
@@ -1666,6 +1693,13 @@ impl Visitor for TypeChecker {
                         }
                     }
                 }
+            }
+        }
+
+        // *** AÑADIR: marcar atributos propios en own_attributes ***
+        if let Some(type_info) = self.types.get_mut(&type_def.name) {
+            for attr in &type_def.attributes {
+                type_info.own_attributes.insert(attr.name.clone());
             }
         }
 
@@ -1706,7 +1740,7 @@ impl Visitor for TypeChecker {
                 self.add_type_error(msg, attr.span);
             }
         }
-        let final_ty = self.unifier.resolve(&init_ty);
+        let final_ty = self.resolve_and_normalize(&init_ty);
         attr.ty = Some(final_ty.clone());
 
         if let Some(type_name) = &self.current_type {
@@ -1910,33 +1944,63 @@ impl Visitor for TypeChecker {
     
     fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
         let mut obj_ty = expr.object.accept(self);
-        // Si es una variable de tipo, resolverla a su tipo concreto
         if let HulkType::Var(_) = obj_ty {
             obj_ty = self.unifier.resolve(&obj_ty);
         }
-        let class_name = match obj_ty {
-            HulkType::Class(name) => name,
-            HulkType::Protocol(_) => {
-                self.add_type_error("Attribute access on protocol type not supported".to_string(), expr.span);
-                return HulkType::Error;
-            }
-            _ => {
-                self.add_type_error(
-                    format!("Attribute access only allowed on class instances, got {:?}", obj_ty),
-                    expr.span,
-                );
+
+        // Determinar si el objeto es "self"
+        let is_self = match &*expr.object {
+            Expr::SelfExpr(_) => true,
+            _ => false,
+        };
+
+        if !is_self {
+            // Acceso a atributo desde fuera de la clase → error
+            self.add_type_error(
+                format!("Cannot access attribute '{}' on non-self object", expr.attribute),
+                expr.span,
+            );
+            return HulkType::Error;
+        }
+
+        // El objeto es self, obtener la clase actual
+        let current_type_name = match self.current_type.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("Cannot use self outside a type definition".to_string(), expr.span);
                 return HulkType::Error;
             }
         };
-        // Buscar el atributo en el tipo
-        if let Some(type_info) = self.types.get(&class_name) {
-            if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
-                expr.ty = Some(attr_ty.clone());
-                return attr_ty.clone();
+
+        let type_info = match self.types.get(current_type_name) {
+            Some(info) => info,
+            None => {
+                self.add_type_error(format!("Type '{}' not found", current_type_name), expr.span);
+                return HulkType::Error;
             }
+        };
+
+        // Verificar que el atributo sea propio de la clase actual (no heredado)
+        if !type_info.own_attributes.contains(&expr.attribute) {
+            self.add_type_error(
+                format!(
+                    "Attribute '{}' is not defined in this class (cannot access inherited private attributes)",
+                    expr.attribute
+                ),
+                expr.span,
+            );
+            return HulkType::Error;
         }
+
+        // Ahora buscar el tipo del atributo (puede estar en attributes, que incluye heredados)
+        if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
+            expr.ty = Some(attr_ty.clone());
+            return attr_ty.clone();
+        }
+
+        // Esto no debería pasar porque own_attributes garantiza que existe
         self.add_type_error(
-            format!("Attribute '{}' not found in type '{}'", expr.attribute, class_name),
+            format!("Attribute '{}' not found in type '{}'", expr.attribute, current_type_name),
             expr.span,
         );
         HulkType::Error
