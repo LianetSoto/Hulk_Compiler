@@ -2,7 +2,7 @@ use super::llvm::LlvmCodeGen;
 use crate::ast::*;
 use crate::error::CompilerError;
 use inkwell::types::{StructType};
-use inkwell::values::{PointerValue, GlobalValue};
+use inkwell::values::{PointerValue, GlobalValue, FunctionValue};
 use inkwell::AddressSpace;
 use crate::semantic::{HulkType, FlattenedType};
 
@@ -33,65 +33,92 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         Ok(struct_type)
     }
 
-    /// Generates the virtual method table (vtable) for a user‑defined type.
+    /// Builds the complete virtual method table (vtable) for a user‑defined type.
     ///
-    /// In HULK every user‑defined type that contains at least one method receives
-    /// a **vtable**: a global constant array of function pointers.  This table is
-    /// stored as an LLVM global variable and is referenced by every instance of
-    /// the type through a dedicated pointer (the first field of the struct).
+    /// # Layout of the generated vtable
+    /// ```text
+    /// { i32,              // type_id – unique numeric identifier of this class
+    ///   ptr,              // parent_vtable – pointer to the vtable of the parent class, or null
+    ///   [N x ptr] }       // methods – array of function pointers, sorted by vtable_index
+    /// ```
+    ///
+    /// The vtable is emitted as a global constant so that every instance of the
+    /// type can reference it through its dedicated vtable pointer (field 0 of the
+    /// object struct).
     pub(crate) fn generate_vtable(
-        &self,
+        &mut self,
         type_name: &str,
         flat: &FlattenedType,
-    ) -> Result<Option<GlobalValue<'ctx>>, CompilerError> {
+    ) -> Result<GlobalValue<'ctx>, CompilerError> {
 
-        // If the type has no methods there is nothing to dispatch → no vtable.
-        if flat.methods.is_empty() {
-            return Ok(None);
-        }
-
-        // [N x ptr]
+        // Generic opaque pointer type used for parent_vtable and method slots.
         let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+
+        // Methods array – length may be zero if the class has no methods.
         let array_type = ptr_type.array_type(flat.methods.len() as u32);
 
-        // Create a global variable that will hold the vtable.
+        // Define the full vtable struct: { i32, ptr, [N x ptr] }
+        let vtable_type = self.context.struct_type(
+            &[
+                self.context.i32_type().into(),  // field 0: type_id
+                ptr_type.into(),                 // field 1: parent_vtable
+                array_type.into(),               // field 2: methods
+            ],
+            false,
+        );
+
+        // Remember the vtable type so that `visit_method_call`, `check_dynamic_type`,
+        // and the runtime function `hulk_instanceof` can access its fields via GEP.
+        self.vtable_types.insert(type_name.to_string(), vtable_type);
+
+        // Create the global variable that will hold the vtable.
         let vtable = self.module.add_global(
-            array_type,
+            vtable_type,
             Some(AddressSpace::default()),
             &format!("{}_vtable", type_name),
         );
 
-        // Sort methods by their vtable index – the order must be stable and
-        // match the indices that `visit_method_call` uses for indirect dispatch.
+        // Build the field values
+
+        // 1. type_id – constant i32 assigned during semantic analysis.
+        let type_id_val = self.context.i32_type().const_int(flat.type_id as u64, false);
+
+        // 2. parent_vtable – pointer to the parent's vtable, or null if this is a
+        //    root class (Object or a class without explicit inherits).
+        let parent_vtable_ptr = if let Some(ref parent_name) = flat.parent_name {
+            // The parent's vtable must already have been generated (the caller
+            // must iterate in topological order).
+            self.vtables.get(parent_name)
+                .map(|gv| gv.as_pointer_value())
+                .unwrap_or_else(|| ptr_type.const_null())
+        } else {
+            ptr_type.const_null()
+        };
+
+        // 3. Methods – collect function pointers, sorted by their vtable index.
         let mut sorted: Vec<_> = flat.methods.iter().collect();
         sorted.sort_by_key(|m| m.vtable_index);
+        let entries: Vec<_> = sorted.iter()
+            .map(|fm| {
+                // Methods follow the naming convention `{TypeName}.{methodName}`.
+                let func_name = format!("{}.{}", fm.defining_type, fm.method.name);
+                self.method_functions[&func_name]
+                    .as_global_value()
+                    .as_pointer_value()
+            })
+            .collect();
+        let methods_array = ptr_type.const_array(&entries);
 
-        // Build the array of function pointers.
-        let mut entries = Vec::with_capacity(sorted.len());
+        // Assemble the complete vtable initializer.
+        let initializer = vtable_type.const_named_struct(&[
+            type_id_val.into(),
+            parent_vtable_ptr.into(),
+            methods_array.into(),
+        ]);
 
-        for fm in sorted {
-
-            // Methods are registered with the name convention `{Type}.{method}`
-            // (e.g. `Point.getX`).  The flattened method records the *defining*
-            // type, which is the class that introduced the implementation.
-            let func_name = format!("{}.{}", fm.defining_type, fm.method.name);
- 
-            let func = self.method_functions.get(&func_name).ok_or_else(|| {
-                CompilerError::CodegenError {
-                    msg: format!("vtable: method '{}' not found", func_name),
-                    span: None,
-                }
-            })?;
-
-            // Store the function as a generic `i8*` pointer.
-            entries.push(func.as_global_value().as_pointer_value());
-        }
-
-        // Create a constant array initialiser and attach it to the global.
-        let initializer = ptr_type.const_array(&entries);
         vtable.set_initializer(&initializer);
 
-        Ok(Some(vtable))
+        Ok(vtable)
     }
 
     /// Computes a pointer to the struct field described by an attribute-access expression.
@@ -186,6 +213,141 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             .clone();
 
         Ok((field_ptr, attr_hulk_ty))
+    }
+
+    /// Declares the runtime type‑checking function `hulk_instanceof`.
+    ///
+    /// Signature: `i1 @hulk_instanceof(i8* %obj, i32 %target_id)`
+    /// Returns `true` if the object pointed to by `%obj` is of the given
+    /// type or a subtype thereof.
+    pub(crate) fn declare_hulk_instanceof(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("hulk_instanceof") {
+            return f;
+        }
+        let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i32_type = self.context.i32_type();
+        let bool_type = self.context.bool_type();
+        let fn_type = bool_type.fn_type(&[ptr_type.into(), i32_type.into()], false);
+        self.module.add_function("hulk_instanceof", fn_type, None)
+    }
+
+    /// Generates the body of `hulk_instanceof` if it hasn't been generated yet.
+    ///
+    /// The function walks the VTable hierarchy starting from the object's
+    /// VTable, comparing the stored `type_id` against the target.  If it
+    /// reaches a null parent pointer, the check fails.
+    ///
+    /// To avoid hard‑coding byte offsets, we create an anonymous struct type
+    /// `{ i32, ptr }` that matches the common header of every VTable.  This
+    /// allows us to use safe `build_struct_gep` with field indices 0 and 1
+    /// instead of raw `build_gep` with byte offsets.
+    pub(crate) fn generate_hulk_instanceof_body(&mut self) -> Result<(), CompilerError> {
+        let func = self.declare_hulk_instanceof();
+       
+        if func.count_basic_blocks() > 0 {
+            return Ok(());
+        }
+
+        let entry = self.context.append_basic_block(func, "entry");
+        let builder = self.context.create_builder();
+        builder.position_at_end(entry);
+
+        // Parameters
+        let obj_ptr = func.get_nth_param(0).unwrap().into_pointer_value();
+        let target_id = func.get_nth_param(1).unwrap().into_int_value();
+
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let bool_ty = self.context.bool_type();
+
+        // Build an anonymous struct type that represents the common header of
+        // every VTable:  { i32 (type_id), ptr (parent_vtable) }.
+        // We don't need the methods array here, so we simply ignore it.
+        let header_ty = self.context.struct_type(
+            &[i32_ty.into(), ptr_ty.into()],
+            false,
+        );
+
+        // Load the VTable pointer from the object (field 0)
+        let vtable_ptr_ptr = builder.build_alloca(ptr_ty, "vtable_curr")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        let vtable_ptr = builder.build_load(ptr_ty, obj_ptr, "vtable")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        builder.build_store(vtable_ptr_ptr, vtable_ptr)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        // Blocks
+        let check_block = self.context.append_basic_block(func, "check");
+        let success_block = self.context.append_basic_block(func, "true");
+        let next_parent_block = self.context.append_basic_block(func, "next_parent");
+        let merge_block = self.context.append_basic_block(func, "merge");
+
+        builder.build_unconditional_branch(check_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        // check block
+        builder.position_at_end(check_block);
+        let curr_vtable = builder.build_load(ptr_ty, vtable_ptr_ptr, "curr_vtable")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        // Access the type_id (field 0 of the header)
+        let type_id_ptr = builder.build_struct_gep(
+            header_ty,
+            curr_vtable.into_pointer_value(),
+            0,
+            "type_id_ptr",
+        ).map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        let curr_type_id = builder.build_load(i32_ty, type_id_ptr, "curr_type_id")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        let is_equal = builder.build_int_compare(
+            inkwell::IntPredicate::EQ,
+            curr_type_id.into_int_value(),
+            target_id,
+            "is_eq",
+        ).map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        builder.build_conditional_branch(is_equal, success_block, next_parent_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        // next_parent block
+        builder.position_at_end(next_parent_block);
+        // Access the parent_vtable (field 1 of the header)
+        let parent_slot_ptr = builder.build_struct_gep(
+            header_ty,
+            curr_vtable.into_pointer_value(),
+            1,
+            "parent_slot",
+        ).map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        let parent_vtable = builder.build_load(ptr_ty, parent_slot_ptr, "parent_vtable")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        let is_null = builder.build_is_null(parent_vtable.into_pointer_value(), "is_null")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        let update_block = self.context.append_basic_block(func, "update");
+        builder.build_conditional_branch(is_null, merge_block, update_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        builder.position_at_end(update_block);
+        builder.build_store(vtable_ptr_ptr, parent_vtable)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        builder.build_unconditional_branch(check_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        // success block
+        builder.position_at_end(success_block);
+        builder.build_unconditional_branch(merge_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        // merge block
+        builder.position_at_end(merge_block);
+        let phi = builder.build_phi(bool_ty, "result")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+        let true_val = bool_ty.const_int(1, false);
+        let false_val = bool_ty.const_int(0, false);
+        phi.add_incoming(&[(&true_val, success_block), (&false_val, next_parent_block)]);
+        builder.build_return(Some(&phi.as_basic_value()))
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
+
+        Ok(())
     }
 
 }
