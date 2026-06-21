@@ -70,7 +70,6 @@ extern {
     }
 }
 
-// ─── LISTAS SEPARADAS POR COMAS (NO AMBIGUO) ──────────────────────────────
 CommaSep<T>: Vec<T> = {
     <first:T> "," <mut rest:CommaSep<T>> => {
         let mut v = vec![first];
@@ -85,7 +84,7 @@ Comma<T>: Vec<T> = {
     => vec![],
 };
 
-// ─── TIPOS ──────────────────────────────────────────────────────────────────
+// Types
 Type: HulkType = {
     "Number"  => HulkType::Number,
     "String"  => HulkType::String,
@@ -98,7 +97,7 @@ Identifier: String = {
     <id:"identifier"> => id,
 };
 
-// ─── ATRIBUTOS ─────────────────────────────────────────────────────────────
+// Attributes
 Attribute: Attribute = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> "=" <init:Expr> ";" <end:@R> => {
         Attribute {
@@ -111,7 +110,7 @@ Attribute: Attribute = {
     }
 };
 
-// ─── PARÁMETROS DE MÉTODO ──────────────────────────────────────────────────
+// Method Params
 MethodParam: MethodParam = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
         MethodParam {
@@ -127,7 +126,7 @@ MethodParams: Vec<MethodParam> = {
     <params:Comma<MethodParam>> => params,
 };
 
-// ─── MÉTODOS ──────────────────────────────────────────────────────────────
+// Methods
 Method: Method = {
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
         Method {
@@ -162,7 +161,6 @@ TypeMembers: Vec<TypeMember> = {
     <mut v:(<TypeMember>)*> => v,
 };
 
-// ─── HERENCIA ──────────────────────────────────────────────────────────────
 ParentArgs: Vec<Box<Expr>> = {
     "(" <args:Comma<Expr>> ")" => args,
 };
@@ -181,7 +179,7 @@ ParentSpec: Parent = {
     }
 };
 
-// ─── FUNCIONES ─────────────────────────────────────────────────────────────
+// Functions
 FunctionParam: Params = {
     <start:@L> <id:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
         Params {
@@ -222,7 +220,7 @@ FunctionDef: FunctionDef = {
     },
 };
 
-// ─── PARÁMETROS DE TIPO ────────────────────────────────────────────────────
+
 TypeParam: (String, Option<HulkType>) = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => (name, ty_ann)
 };
@@ -231,7 +229,7 @@ TypeParams: Vec<(String, Option<HulkType>)> = {
     <params:Comma<TypeParam>> => params,
 };
 
-// ─── DEFINICIÓN DE TIPO ────────────────────────────────────────────────────
+// Type Definition
 TypeDef: TypeDef = {
     <start:@L> "type" <name:"identifier">
     <params:("(" <TypeParams> ")")?>
@@ -264,7 +262,7 @@ TypeDef: TypeDef = {
     }
 };
 
-// ─── PROTOCOLOS ────────────────────────────────────────────────────────────
+//Protocols
 ProtocolMethod: ProtocolMethod = {
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> ";" <end:@R> => {
         ProtocolMethod {
@@ -298,7 +296,7 @@ ProtocolDef: ProtocolDef = {
     }
 };
 
-// ─── PROGRAMA ──────────────────────────────────────────────────────────────
+// Program
 TopLevel: TopLevel = {
     <t:TypeDef> => TopLevel::Type(t),
     <p:ProtocolDef> => TopLevel::Protocol(p),
@@ -306,7 +304,7 @@ TopLevel: TopLevel = {
 };
 
 pub Program: Box<Program> = {
-    <start:@L> <items:TopLevel*> <main_expr:Expr> <end:@R> => {
+    <start:@L> <items:TopLevel*> <main_expr:Expr> <semicolon:";"?> <end:@R> => {
         let mut types = vec![];
         let mut protocols = vec![];
         let mut functions = vec![];
@@ -327,7 +325,7 @@ pub Program: Box<Program> = {
     }
 };
 
-// ─── EXPRESIONES ──────────────────────────────────────────────────────────
+// Expressions
 Expr: Box<Expr> = {
     <e:SimpleExpr> => e,
     <e:BlockExpr> => e,
@@ -488,7 +486,7 @@ ForExpr: Box<Expr> = {
     }
 };
 
-// ─── OPERADORES ──────────────────────────────────────────────────────────
+// Operators
 LogicalOrExpr: Box<Expr> = {
     <start:@L> <l:LogicalOrExpr> "|" <r:LogicalAndExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
@@ -511,8 +509,6 @@ LogicalAndExpr: Box<Expr> = {
     <e:ComparisonExpr> => e,
 };
 
-// `is` and `as` moved to PostfixExpr as postfix operators to avoid
-// introducing ambiguities in higher-level expression states.
 
 ComparisonExpr: Box<Expr> = {
     <start:@L> <l:ComparisonExpr> "==" <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
