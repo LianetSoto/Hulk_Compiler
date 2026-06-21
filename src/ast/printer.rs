@@ -454,6 +454,28 @@ impl Visitor for PrettyPrinter {
         };
         self.write_line(&format!("ProtocolMethod {{ {}({}){} }}", m.name, params_str.join(", "), ret_str));
     }
+    fn visit_is(&mut self, expr: &mut IsExpr) -> Self::Result {
+        self.write_line("Is {");
+        self.indent += 1;
+        self.write_line("expr:");
+        self.indent += 1;
+        expr.expr.accept(self);
+        self.indent -= 1;
+        self.write_line(&format!("type: '{}'", expr.type_name));
+        self.indent -= 1;
+        self.write_line("}");
+    }
 
+    fn visit_as(&mut self, expr: &mut AsExpr) -> Self::Result {
+        self.write_line("As {");
+        self.indent += 1;
+        self.write_line("expr:");
+        self.indent += 1;
+        expr.expr.accept(self);
+        self.indent -= 1;
+        self.write_line(&format!("type: '{}'", expr.type_name));
+        self.indent -= 1;
+        self.write_line("}");
+    }
     
 }

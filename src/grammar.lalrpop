@@ -65,20 +65,27 @@ extern {
         "range"  => Token::Range,
         "protocol" => Token::Protocol,
         "extends"  => Token::Extends,
-
+        "is"     => Token::Is,
+        "as"     => Token::As,
     }
 }
 
-Comma<T>: Vec<T> = {
-    <mut v:(<T> ",")*> <e:T?> => match e {
-        None => v,
-        Some(e) => {
-            v.push(e);
-            v
-        }
-    }
+// ─── LISTAS SEPARADAS POR COMAS (NO AMBIGUO) ──────────────────────────────
+CommaSep<T>: Vec<T> = {
+    <first:T> "," <mut rest:CommaSep<T>> => {
+        let mut v = vec![first];
+        v.append(&mut rest);
+        v
+    },
+    <first:T> => vec![first],
 };
 
+Comma<T>: Vec<T> = {
+    <v:CommaSep<T>> => v,
+    => vec![],
+};
+
+// ─── TIPOS ──────────────────────────────────────────────────────────────────
 Type: HulkType = {
     "Number"  => HulkType::Number,
     "String"  => HulkType::String,
@@ -87,7 +94,11 @@ Type: HulkType = {
     <id:"identifier"> => HulkType::UserDefined(id),
 };
 
-// Attribute: name [: Type] = expr ;
+Identifier: String = {
+    <id:"identifier"> => id,
+};
+
+// ─── ATRIBUTOS ─────────────────────────────────────────────────────────────
 Attribute: Attribute = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> "=" <init:Expr> ";" <end:@R> => {
         Attribute {
@@ -100,6 +111,7 @@ Attribute: Attribute = {
     }
 };
 
+// ─── PARÁMETROS DE MÉTODO ──────────────────────────────────────────────────
 MethodParam: MethodParam = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
         MethodParam {
@@ -115,8 +127,8 @@ MethodParams: Vec<MethodParam> = {
     <params:Comma<MethodParam>> => params,
 };
 
+// ─── MÉTODOS ──────────────────────────────────────────────────────────────
 Method: Method = {
-    // Simple body (with =>)
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
         Method {
             name,
@@ -125,10 +137,9 @@ Method: Method = {
             body,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ret_ann,  
+            ty_annotation: ret_ann,
         }
     },
-    // Block body (without =>)
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> <body:BlockExpr> <end:@R> => {
         Method {
             name,
@@ -148,18 +159,14 @@ TypeMember: TypeMember = {
 };
 
 TypeMembers: Vec<TypeMember> = {
-    <mut v:(<TypeMember>)*> => {
-        let mut vec = v;
-        vec
-    }
+    <mut v:(<TypeMember>)*> => v,
 };
 
-// Arguments for the parent type (optional)
+// ─── HERENCIA ──────────────────────────────────────────────────────────────
 ParentArgs: Vec<Box<Expr>> = {
     "(" <args:Comma<Expr>> ")" => args,
 };
 
-// Inheritance specification: "inherits" + Type + optional arguments
 ParentSpec: Parent = {
     <start:@L> "inherits" <name:Type> <args:ParentArgs?> <end:@R> => {
         Parent {
@@ -174,7 +181,7 @@ ParentSpec: Parent = {
     }
 };
 
-// Function parameters (with optional type annotation)
+// ─── FUNCIONES ─────────────────────────────────────────────────────────────
 FunctionParam: Params = {
     <start:@L> <id:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
         Params {
@@ -190,7 +197,6 @@ FunctionParams: Vec<Params> = {
     <params:Comma<FunctionParam>> => params,
 };
 
-// Function definition
 FunctionDef: FunctionDef = {
     <start:@L> "function" <name:"identifier"> "(" <params:FunctionParams> ")" <ret_ann:(":" <Type>)?> "=>" <body:SimpleExpr> ";" <end:@R> => {
         FunctionDef {
@@ -216,7 +222,7 @@ FunctionDef: FunctionDef = {
     },
 };
 
- // Type parameters (identifiers only)
+// ─── PARÁMETROS DE TIPO ────────────────────────────────────────────────────
 TypeParam: (String, Option<HulkType>) = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => (name, ty_ann)
 };
@@ -225,6 +231,7 @@ TypeParams: Vec<(String, Option<HulkType>)> = {
     <params:Comma<TypeParam>> => params,
 };
 
+// ─── DEFINICIÓN DE TIPO ────────────────────────────────────────────────────
 TypeDef: TypeDef = {
     <start:@L> "type" <name:"identifier">
     <params:("(" <TypeParams> ")")?>
@@ -246,8 +253,8 @@ TypeDef: TypeDef = {
         }
         TypeDef {
             name,
-            params: names,          // <-- ahora usamos names
-            param_types: types,     // <-- ahora usamos types
+            params: names,
+            param_types: types,
             parent,
             attributes: attrs,
             methods: meths,
@@ -257,7 +264,7 @@ TypeDef: TypeDef = {
     }
 };
 
-// Protocols
+// ─── PROTOCOLOS ────────────────────────────────────────────────────────────
 ProtocolMethod: ProtocolMethod = {
     <start:@L> <name:"identifier"> "(" <params:MethodParams> ")" <ret_ann:(":" <Type>)?> ";" <end:@R> => {
         ProtocolMethod {
@@ -291,6 +298,7 @@ ProtocolDef: ProtocolDef = {
     }
 };
 
+// ─── PROGRAMA ──────────────────────────────────────────────────────────────
 TopLevel: TopLevel = {
     <t:TypeDef> => TopLevel::Type(t),
     <p:ProtocolDef> => TopLevel::Protocol(p),
@@ -319,8 +327,7 @@ pub Program: Box<Program> = {
     }
 };
 
-
-// Expressions
+// ─── EXPRESIONES ──────────────────────────────────────────────────────────
 Expr: Box<Expr> = {
     <e:SimpleExpr> => e,
     <e:BlockExpr> => e,
@@ -335,7 +342,6 @@ SimpleExpr: Box<Expr> = {
     <e:LogicalOrExpr> => e,
 };
 
-// Blocks{ ... }
 BlockExpr: Box<Expr> = {
     <start:@L> "{" <exprs:BlockInner> "}" <end:@R> => {
         Box::new(Expr::Block(BlockExpr {
@@ -346,8 +352,6 @@ BlockExpr: Box<Expr> = {
     }
 };
 
-// Inside a block: zero or more expressions followed by ';'
-// and optionally a final expression without ';'
 BlockInner: Vec<Box<Expr>> = {
     <mut v:(<Expr> ";")*> <last:Expr?> => {
         let mut vec = v;
@@ -356,7 +360,6 @@ BlockInner: Vec<Box<Expr>> = {
     }
 };
 
-// Let expression
 LetExpr: Box<Expr> = {
     <start:@L> "let" <bindings:LetBindings> "in" <body:Expr> <end:@R> => {
         Box::new(Expr::Let(LetExpr {
@@ -485,7 +488,7 @@ ForExpr: Box<Expr> = {
     }
 };
 
-//Operators
+// ─── OPERADORES ──────────────────────────────────────────────────────────
 LogicalOrExpr: Box<Expr> = {
     <start:@L> <l:LogicalOrExpr> "|" <r:LogicalAndExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
         left: l,
@@ -507,6 +510,9 @@ LogicalAndExpr: Box<Expr> = {
     })),
     <e:ComparisonExpr> => e,
 };
+
+// `is` and `as` moved to PostfixExpr as postfix operators to avoid
+// introducing ambiguities in higher-level expression states.
 
 ComparisonExpr: Box<Expr> = {
     <start:@L> <l:ComparisonExpr> "==" <r:AddSubExpr> <end:@R> => Box::new(Expr::BinaryOp(BinaryOpExpr {
@@ -640,7 +646,6 @@ UnaryExpr: Box<Expr> = {
 
 PostfixExpr: Box<Expr> = {
     <e:AtomicExpr> => e,
-    // If the object is a VariableExpr named "self", convert it to SelfExpr
     <start:@L> <obj:PostfixExpr> "." <m:"identifier"> <end:@R> => {
         match obj.as_ref() {
             Expr::Variable(v) if v.name == "self" => {
@@ -685,9 +690,32 @@ PostfixExpr: Box<Expr> = {
             }
         }
     },
+    <start:@L> <obj:PostfixExpr> "is" <ty:Type> <end:@R> => {
+        let type_name = match ty {
+            HulkType::UserDefined(s) => s,
+            _ => panic!("is only works with user-defined types or protocols"),
+        };
+        Box::new(Expr::Is(IsExpr {
+            expr: obj,
+            type_name,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    },
+    <start:@L> <obj:PostfixExpr> "as" <ty:Type> <end:@R> => {
+        let type_name = match ty {
+            HulkType::UserDefined(s) => s,
+            _ => panic!("as only works with user-defined types or protocols"),
+        };
+        Box::new(Expr::As(AsExpr {
+            expr: obj,
+            type_name,
+            span: Span::new(start, end),
+            ty: None,
+        }))
+    },
 };
 
-//Atomic level
 AtomicExpr: Box<Expr> = {
     "(" <e:Expr> ")" => e,
 
@@ -722,11 +750,9 @@ AtomicExpr: Box<Expr> = {
         ty: None,
     })),
 
-    // Generic function call (includes sin, cos, range, etc.)
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
-        // If it's "base" and has no arguments, generate BaseExpr
         if id == "base" && args.is_empty() {
-            Box::new(Expr::Base(BaseExpr { span: Span::new(start, end), ty: None, base_type: None, method_name: None, }))
+            Box::new(Expr::Base(BaseExpr { span: Span::new(start, end), ty: None, base_type: None, method_name: None }))
         } else {
             Box::new(Expr::Call(CallExpr { func: id, args, span: Span::new(start, end), ty: None }))
         }
@@ -745,7 +771,6 @@ AtomicExpr: Box<Expr> = {
         }))
     },
 
-    //id
     <start:@L> <id:"identifier"> <end:@R> => Box::new(Expr::Variable(VariableExpr {
         name: id,
         span: Span::new(start, end),

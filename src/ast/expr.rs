@@ -23,7 +23,8 @@ pub enum Expr {
     SelfExpr(SelfExpr),
     Base(BaseExpr),
     AttributeAccess(AttributeAccessExpr),
-    //Lambda(LambdaExpr),
+    Is(IsExpr),
+    As(AsExpr),
 }
 
 impl Expr {
@@ -31,7 +32,6 @@ impl Expr {
         match self {
             Expr::Number(n) => n.span,
             Expr::BinaryOp(b) => b.span,
-            // Expr::Print(p) => p.span,
             Expr::String(s) => s.span,
             Expr::Bool(b) => b.span,
             Expr::Const(c) => c.span,
@@ -48,6 +48,8 @@ impl Expr {
             Expr::SelfExpr(self_expr) => self_expr.span,
             Expr::Base(base_expr) => base_expr.span,
             Expr::AttributeAccess(attr)=> attr.span,
+            Expr::Is(is) => is.span,
+            Expr::As(as_expr) => as_expr.span,
             //Expr::Lambda(lambda) => lambda.span,
         }
     }
@@ -72,7 +74,10 @@ impl Expr {
             Expr::SelfExpr(self_expr) => self_expr.ty.as_ref(),
             Expr::Base(base_expr) => base_expr.ty.as_ref(),
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
+            Expr::Is(is) => is.ty.as_ref(),
+            Expr::As(as_expr) => as_expr.ty.as_ref(),
             //Expr::Lambda(lambda) => lambda.ty.as_ref(),
+
         }
     }
 
@@ -96,6 +101,8 @@ impl Expr {
             Expr::SelfExpr(e) => &mut e.ty,
             Expr::Base(e) => &mut e.ty,
             Expr::AttributeAccess(e) => &mut e.ty,
+            Expr::Is(is) => &mut is.ty,
+            Expr::As(as_expr) => &mut as_expr.ty,
             //Expr::Lambda(e) => &mut e.ty,
         }
     }
@@ -122,6 +129,8 @@ impl Node for Expr {
             Expr::SelfExpr(self_expr) => self_expr.accept(visitor),
             Expr::Base(base_expr) => base_expr.accept(visitor),
             Expr::AttributeAccess(attr) => attr.accept(visitor),
+            Expr::Is(is) => is.accept(visitor),
+            Expr::As(as_expr) => as_expr.accept(visitor),
             //Expr::Lambda(lambda) => lambda.accept(visitor),
         }
     }
@@ -401,3 +410,30 @@ impl Node for AttributeAccessExpr {
 //         visitor.visit_lambda(self)
 //     }
 // }
+#[derive(Debug, Clone, PartialEq)]
+pub struct IsExpr {
+    pub expr: Box<Expr>,
+    pub type_name: String,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for IsExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_is(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AsExpr {
+    pub expr: Box<Expr>,
+    pub type_name: String,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+impl Node for AsExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_as(self)
+    }
+}
