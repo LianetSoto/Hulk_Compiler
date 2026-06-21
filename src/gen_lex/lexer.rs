@@ -155,7 +155,13 @@ impl Lexer {
                             't' => { string_content.push('\t'); i += 2; }
                             '"' => { string_content.push('"'); i += 2; }
                             '\\' => { string_content.push('\\'); i += 2; }
-                            _ => { string_content.push(chars[i]); i += 1; }
+                            c => {
+                            // Carácter inválido después de la barra invertida
+                            return Err(CompilerError::LexerError {
+                                msg: format!("Invalid escape sequence: '\\{}'", c),
+                                span: Span::new(i, i + 2),
+                            });
+                        }
                         }
                     } else {
                         string_content.push(chars[i]);
@@ -284,9 +290,10 @@ impl Lexer {
                 tokens.push((i, lexer_token, pos + 1));
                 i = pos + 1;
             } else {
-                // Carácter no reconocido 
-                tokens.push((i, LexerToken::Error, i + 1));
-                i += 1;
+                    return Err(CompilerError::LexerError {
+                    msg: format!("Carácter no reconocido: '{}'", chars[i]),
+                    span: Span::new(i, i + 1),
+                });
             }
         }
         Ok(tokens)
