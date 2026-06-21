@@ -67,6 +67,7 @@ extern {
         "extends"  => Token::Extends,
         "is"     => Token::Is,
         "as"     => Token::As,
+        "T"      => Token::T,
     }
 }
 
@@ -90,6 +91,7 @@ Type: HulkType = {
     "String"  => HulkType::String,
     "Boolean" => HulkType::Boolean,
     "Object"  => HulkType::Object,
+    "T" => HulkType::GenericPlaceholder,
     <id:"identifier"> => HulkType::UserDefined(id),
 };
 
@@ -100,12 +102,18 @@ Identifier: String = {
 // Attributes
 Attribute: Attribute = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> "=" <init:Expr> ";" <end:@R> => {
+        let ann = ty_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         Attribute {
             name,
             init_expr: init,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ty_ann,
+            ty_annotation: ann,
         }
     }
 };
@@ -113,11 +121,17 @@ Attribute: Attribute = {
 // Method Params
 MethodParam: MethodParam = {
     <start:@L> <name:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
+        let ann = ty_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         MethodParam {
             name,
             span: Span::new(start, end),
             ty: None,
-            ty_annotation: ty_ann,
+            ty_annotation: ann,
         }
     }
 };
@@ -182,10 +196,16 @@ ParentSpec: Parent = {
 // Functions
 FunctionParam: Params = {
     <start:@L> <id:"identifier"> <ty_ann:(":" <Type>)?> <end:@R> => {
+        let ann = ty_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
         Params {
             name: id,
             ty: None,
-            ty_annotation: ty_ann,
+            ty_annotation: ann,
             span: Span::new(start, end),
         }
     },
@@ -370,7 +390,15 @@ LetExpr: Box<Expr> = {
 };
 
 Binding: (String, Option<HulkType>, Box<Expr>) = {
-    <id:"identifier"> <ty_ann:(":" <Type>)?> "=" <e:Expr> => (id, ty_ann, e)
+    <id:"identifier"> <ty_ann:(":" <Type>)?> "=" <e:Expr> => {
+        let ann = ty_ann.and_then(|ty| {
+            match ty {
+                HulkType::GenericPlaceholder => None,
+                _ => Some(ty),
+            }
+        });
+        (id, ann, e)
+    }
 };
 
 LetBindings: Vec<(String, Option<HulkType>, Box<Expr>)> = {

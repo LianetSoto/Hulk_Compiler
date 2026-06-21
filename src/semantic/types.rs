@@ -9,6 +9,7 @@ pub enum HulkType {
     Var(usize),
     Class(String),
     Protocol(String),
+    GenericPlaceholder,
 }
 
 impl HulkType {
