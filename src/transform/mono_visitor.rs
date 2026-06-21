@@ -234,22 +234,22 @@ impl Visitor for MonomorphizationPass {
         m.body.accept(self)?;
         Ok(())
     }
+
+    fn visit_is(&mut self, method: &mut IsExpr) -> Self::Result {
+        method.expr.accept(self)?;  
+        Ok(())
+    }
+
+    fn visit_as(&mut self, method: &mut AsExpr) -> Self::Result {
+        method.expr.accept(self)?;  
+        Ok(())
+    }
     
     fn visit_protocol_def(&mut self, proto: &mut ProtocolDef) -> Self::Result {
         todo!()
     }
     
     fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result {
-        todo!()
-    }
-
-
-    fn visit_is(&mut self, method: &mut IsExpr) -> Self::Result {
-        todo!()
-    }
-
-
-    fn visit_as(&mut self, method: &mut AsExpr) -> Self::Result {
         todo!()
     }
 }
