@@ -167,9 +167,9 @@ impl MonomorphizationPass {
                 }
             }
             Expr::Let(let_expr) => {
-                // for (_, init) in &mut let_expr.bindings {
-                //     Self::substitute_in_expr(init, subst);
-                // }
+                for (_, _, init) in &mut let_expr.bindings {
+                    Self::substitute_in_expr(init, subst);
+                }
                 Self::substitute_in_expr(&mut let_expr.body, subst);
             }
             Expr::If(if_expr) => {
@@ -204,12 +204,12 @@ impl MonomorphizationPass {
                     Self::substitute_in_expr(arg, subst);
                 }
             }
-                Expr::Is(is_expr) => {
-        
-    }
-    Expr::As(as_expr) => {
-       
-    }
+            Expr::Is(is_expr) => {
+                Self::substitute_in_expr(&mut is_expr.expr, subst);
+            }
+            Expr::As(as_expr) => {
+                Self::substitute_in_expr(&mut as_expr.expr, subst);
+            }
         }
     }
 
