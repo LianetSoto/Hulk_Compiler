@@ -155,7 +155,13 @@ impl Lexer {
                             't' => { string_content.push('\t'); i += 2; }
                             '"' => { string_content.push('"'); i += 2; }
                             '\\' => { string_content.push('\\'); i += 2; }
-                            _ => { string_content.push(chars[i]); i += 1; }
+                            c => {
+                            // Carácter inválido después de la barra invertida
+                            return Err(CompilerError::LexerError {
+                                msg: format!("Invalid escape sequence: '\\{}'", c),
+                                span: Span::new(i, i + 2),
+                            });
+                        }
                         }
                     } else {
                         string_content.push(chars[i]);
