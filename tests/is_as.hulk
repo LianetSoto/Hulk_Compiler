@@ -1,20 +1,41 @@
-type A {
-    // ...
+// Test: is / as operators
+
+type Animal { }
+
+type Perro inherits Animal {
+    ladrar() => print("Guau!");
 }
 
-type B inherits A {
-    // ...
+type Gato inherits Animal {
+    maullar() => print("Meow!");
 }
 
-type C inherits A {
-    // ...
-}
+{
+    // is with inheritance
+    let a : Animal = new Perro() in {
+        print(a is Animal);    // true  (Perro is an Animal)
+        print(a is Perro);     // true  (a is actually a Perro)
+        print(a is Gato);      // false (Perro is not a Gato)
+    };
 
-let x : A = if (rand() < 0.5) new B() else new C() in
-    if (x is B)
-        let y : B = x as B in {
-            // you can use y with static type B
-        }
-    else {
-        // x cannot be downcasted to B
-    }
+    // is with unrelated types
+    let p = new Perro() in {
+        print(p is Gato);      // false (unrelated)
+        print(p is Animal);    // true  (inheritance)
+    };
+
+    // successful as (safe downcast)
+    let b : Animal = new Perro() in 
+        if (b is Perro) 
+            {
+                let p : Perro = b as Perro in
+                p.ladrar();              // "Guau!"
+               
+            }
+        else print("B no es perro");
+    
+
+    // as used directly in an expression
+    let c : Animal = new Gato() in
+        (c as Gato).maullar();       // "Meow!"
+}

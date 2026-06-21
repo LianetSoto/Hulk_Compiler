@@ -1,0 +1,19 @@
+type A {
+    // ...
+}
+
+type B inherits A {
+    // ...
+}
+
+type C inherits A {
+    // ...
+}
+
+let x : A = if (2 > 3) new B() else new C() in
+    if (x is B)
+        let y : B = x as B in {
+            print("success")
+        }
+    else print("x cannot be downcasted to B");
+    
