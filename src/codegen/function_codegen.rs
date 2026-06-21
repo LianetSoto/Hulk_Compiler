@@ -35,12 +35,6 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         self.declare_log();
         self.declare_rand();
         self.declare_fmod();
-        // self.declare_printf();
-        // self.declare_strcmp();
-        // self.declare_sprintf();
-        // self.declare_strlen();
-        // self.declare_malloc();
-        // self.declare_memcpy();
     }
 
     /// Declares the LLVM function signature for a user‑defined HULK function.
