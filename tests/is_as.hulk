@@ -1,0 +1,19 @@
+type Bird {
+    name = "bird";
+}
+type Plane {
+    name = "plane";
+}
+type Superman {
+    name = "superman";
+}
+{
+    let x = new Superman() in
+    print(
+        if (x is Bird) "It's bird!"
+        elif (x is Plane) "It's a plane!"
+        else "No, it's Superman!"
+    );
+
+    let y: Plane = x as Plane in  print(y.name);
+}
