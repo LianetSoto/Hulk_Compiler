@@ -114,31 +114,6 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
         process::exit(1);
     }
 
-    type_checker.resolve_ast(&mut ast);
-
-    type_checker.flatten_all_types();
-
-     println!("=== Flattened Types ===");
-    for (name, flat) in type_checker.get_flattened_types() {
-        println!("Type: {}", name);
-        println!("  Parameters:");
-        for (pname, pty) in &flat.params {
-            println!("    {} : {:?}", pname, pty);
-        }
-        println!("  Attributes:");
-        for attr in &flat.attributes {
-            println!("    {} : {:?}", attr.name, attr.ty);
-        }
-        println!("  Methods:");
-        for fm in &flat.methods {
-            println!("    {} (vtable index: {}, owner: {:?})",
-                    fm.method.name,
-                    fm.vtable_index,
-                    fm.defining_type);
-        }
-        println!();
-    }
-    println!("=========================");
 
     if print_typed {
         let mut printer = PrettyPrinter::new();
