@@ -48,9 +48,17 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         let user_map = self.declare_all_functions(&program.functions)?;
         self.user_functions = user_map;
 
-        // Generate VTables for all classes
-        for (type_name, flat) in self.flattened_types.clone().iter() {
-            let vtable = self.generate_vtable(type_name, flat)?;
+        // Generate VTables for ALL classes in topological order.
+        //
+        // Topological order guarantees that when we process a child class
+        // (e.g. Perro), the vtable of its parent (Animal) has already been
+        // inserted into `self.vtables`.  This allows `generate_vtable` to
+        // obtain a valid parent pointer and avoids `null` parents caused by
+        // non‑deterministic iteration over `HashMap`.
+        let ordered_types = self.topological_sort_types();
+        for type_name in &ordered_types {
+            let flat = self.flattened_types[type_name].clone();
+            let vtable = self.generate_vtable(type_name, &flat)?;
             self.vtables.insert(type_name.clone(), vtable);
         }
 

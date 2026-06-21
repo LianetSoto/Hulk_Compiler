@@ -2,7 +2,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::builder::Builder;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, GlobalValue};
-use std::collections::HashMap;
+use std::collections::{HashSet, HashMap};
 use crate::semantic::{HulkType, FlattenedType};
 use crate::ast::{Program, Node, Expr, TypeDef, Method};
 use crate::error::{CompilerError};
@@ -157,7 +157,56 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             }),
         }
     }
-    
+
+    /// Returns the type names sorted in **topological order**, i.e. parents
+    /// always appear before their children.
+    ///
+    /// This guarantees that when we later generate a vtable for a child class,
+    /// the vtable of its parent already exists in `self.vtables` and can be
+    /// referenced correctly. 
+    pub(crate) fn topological_sort_types(&self) -> Vec<String> {
+        let mut sorted = Vec::new();
+        let mut visited = HashSet::new();
+
+        /// Recursive depth‑first traversal that ensures the parent is visited
+        /// before the child.
+        fn visit(
+            name: &str,
+            flat_map: &HashMap<String, FlattenedType>,
+            sorted: &mut Vec<String>,
+            visited: &mut HashSet<String>,
+        ) {
+            if visited.contains(name) {
+                return;
+            }
+            visited.insert(name.to_string());
+
+            // Visit the parent first so that it is emitted before the child.
+            if let Some(flat) = flat_map.get(name) {
+                if let Some(ref parent_name) = flat.parent_name {
+                    visit(parent_name, flat_map, sorted, visited);
+                }
+            }
+
+            // After the parent (if any), emit the current type.
+            sorted.push(name.to_string());
+        }
+
+        // Object, if it exists, should come first.  It has no parent, so the
+        // recursion naturally emits it early, but we explicitly start with it
+        // for clarity.
+        if self.flattened_types.contains_key("Object") {
+            visit("Object", &self.flattened_types, &mut sorted, &mut visited);
+        }
+
+        // Process every user‑defined type.
+        for name in self.flattened_types.keys() {
+            visit(name, &self.flattened_types, &mut sorted, &mut visited);
+        }
+
+        sorted
+    }
+        
     // Random generator seeding
 
     /// Seeds the C random number generator with the current time so that
