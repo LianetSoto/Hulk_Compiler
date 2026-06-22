@@ -107,22 +107,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 
     // 2. Semantic analysis (type checking)
     let mut type_checker = TypeChecker::new();
-    if let Err(errors) = type_checker.check(&mut ast) {
-        for err in errors {
-            report_error(&err, &source_map, filename);
-        }
-        process::exit(1);
-    }
-
-
-    if print_typed {
-        let mut printer = PrettyPrinter::new();
-        ast.accept(&mut printer);
-        println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
-    }
-
-    // Verificar que no queden variables de tipo sin resolver en las definiciones de tipos
-    if let Err(errors) = type_checker.verify_no_type_vars(&ast) {
+    if let Err(errors) = type_checker.check(&mut ast, print_typed) {
         for err in errors {
             report_error(&err, &source_map, filename);
         }
