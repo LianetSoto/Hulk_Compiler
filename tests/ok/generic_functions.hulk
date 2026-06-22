@@ -1,0 +1,49 @@
+// =============================================================================
+// Test: generic functions with parametric polymorphism
+//
+// Exercises the type‑system extension that allows a single function definition
+// to be reused across different types, either with an explicit type parameter
+// (T) or by letting the compiler infer the genericity from the body.
+// =============================================================================
+
+// --- Generic function inferred from the body ---
+// `first` returns its first argument regardless of the concrete types.
+function first(a, b) => a;
+
+// --- Generic function with explicit type parameter ---
+// Both arguments and the return value share the same type variable T.
+function second(a: T, b: T): T => b;
+
+// --- Fully inferred generic identity ---
+function id(x) => x;
+
+// --- Generic function calling another generic function ---
+// The monomorphisation pass must specialise both `call_id` and `id`.
+function call_id(y): T => id(y);
+
+// --- Generic function with a conditional ---
+// The type of `cond` is fixed to Boolean, while `a` and `b` share T.
+function choose(cond, a: T, b: T) => if (cond) a else b;
+
+// =============================================================================
+// Entry point
+// =============================================================================
+{
+    // `first` with mixed argument types – returns the first one
+    print(first(1, "one"));              // 1
+    print(first("hello", true));         // "hello"
+    print(first(true, 5));               // true
+
+    // `second` requires both arguments to have the same type T
+    print(second("ignored", 42));        // 42
+    print(second(true, "value"));        // "value"
+
+    // Generic identity through a wrapper
+    print(call_id(7));                   // 7
+    print(call_id("hello"));             // "hello"
+
+    // Conditional generic selection
+    print(choose(true, 10, 20));         // 10
+    print(choose(false, "yes", "no"));   // "no"
+    print(choose(true, true, false));    // true
+}
