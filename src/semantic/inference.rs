@@ -4,6 +4,7 @@ use crate::semantic::types::HulkType;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     StringOrNumber,
+    ConformsToProtocol(String), 
 }
 
 #[derive(Default)]
@@ -40,23 +41,7 @@ impl Unifier {
     }
 
     // Verifica que el tipo cumpla todas las restricciones de la variable
-    fn check_constraints(&self, id: usize, ty: &HulkType) -> Result<(), String> {
-        if let Some(constraints) = self.constraints.get(&id) {
-            for c in constraints {
-                match c {
-                    Constraint::StringOrNumber => {
-                        if !matches!(ty, HulkType::String | HulkType::Number) {
-                            return Err(format!(
-                                "Type must be String or Number, got {:?}",
-                                ty
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
+    
 
     // Unifica dos tipos, registrando sustituciones
     pub fn unify(&mut self, a: &HulkType, b: &HulkType) -> Result<(), String> {
@@ -71,8 +56,6 @@ impl Unifier {
             (HulkType::Boolean, HulkType::Boolean) => Ok(()),
             (HulkType::Class(c1), HulkType::Class(c2)) if c1 == c2 => Ok(()),
             (HulkType::Protocol(p1), HulkType::Protocol(p2)) if p1 == p2 => Ok(()),
-            (HulkType::Var(id), HulkType::Protocol(_)) => self.bind(*id, b),
-            (HulkType::Protocol(_), HulkType::Var(id)) => self.bind(*id, a),
             (HulkType::Object, HulkType::Object) => Ok(()),
             _ => Err(format!("Cannot unify {:?} and {:?}", a, b)),
         }
@@ -103,4 +86,23 @@ impl Unifier {
     pub fn get_constraints(&self, id: usize) -> Option<&Vec<Constraint>> {
         self.constraints.get(&id)
     }
+
+    // Dentro de impl Unifier
+pub fn check_constraints(&self, id: usize, ty: &HulkType) -> Result<(), String> {
+    if let Some(constraints) = self.constraints.get(&id) {
+        for c in constraints {
+            match c {
+                Constraint::StringOrNumber => {
+                    if !matches!(ty, HulkType::String | HulkType::Number) {
+                        return Err(format!("Type {:?} must be String or Number", ty));
+                    }
+                }
+                Constraint::ConformsToProtocol(_) => {
+                    // La verificación se hace en el TypeChecker en la llamada
+                }
+            }
+        }
+    }
+    Ok(())
+}
 }
