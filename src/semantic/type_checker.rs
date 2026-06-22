@@ -1063,14 +1063,27 @@ impl Visitor for TypeChecker {
 
         // 1. Registrar funciones ANTES de procesar tipos
         for func in &program.functions {
-            self.functions.insert(func.name.clone(), FunctionInfo {
-                params_len: func.params.len(),
-                param_types: None,
-                return_type: None,
-                is_generic: false,
-            });
+            if self.functions.contains_key(&func.name) {
+                self.add_type_error(
+                    format!("Duplicate function '{}'", func.name),
+                    func.span,
+                );
+            } else {
+                self.functions.insert(func.name.clone(), FunctionInfo {
+                    params_len: func.params.len(),
+                    param_types: None,
+                    return_type: None,
+                    is_generic: false,
+                });
+            }
         }
-        self.prepare_function_vars(program); // crea variables de tipo para parámetros y retorno
+
+        // Si hay errores, no continuar
+        if !self.errors.is_empty() {
+            return HulkType::Error;
+        }
+
+        self.prepare_function_vars(program);
 
         // 2. Procesar tipos (ahora las funciones ya están registradas)
         for type_def in &mut program.types {
