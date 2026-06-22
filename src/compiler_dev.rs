@@ -23,65 +23,8 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 {
     let source_map = SourceMap::new(source_code.to_string());
 
-    let patterns = vec![
-        // --- Reserved Keywords ---
-        ("Let", "let"),
-        ("In", "in"),
-        ("If", "if"),
-        ("Else", "else"),
-        ("Elif", "elif"),
-        ("While", "while"),
-        ("For", "for"),
-        ("Function", "function"),
-        ("Print", "print"),
-        ("True", "true"),
-        ("False", "false"),
-        ("Pi", "PI"),
-        ("E", "E"),
-        ("Sin", "sin"),
-        ("Cos", "cos"),
-        ("Tan", "tan"),
-        ("Sqrt", "sqrt"),
-        ("Log", "log"),
-        ("Exp", "exp"),
-        ("Rand", "rand"),
 
-        // --- Multi‑character operators (longest match first) ---
-        ("Arrow", "=>"),
-        ("Eq", "="),
-        ("Assign", ":="),
-        ("EqEq", "=="),
-        ("Neq", "!="),
-        ("Leq", "<="),
-        ("Geq", ">="),
-
-        // --- Single‑character operators ---
-        ("Lt", "<"),
-        ("Gt", ">"),
-        ("And", "&"),
-        ("Or", "|"),
-        ("Not", "!"),
-        ("Plus", "+"),
-        ("Minus", "-"),
-        ("Mult", "*"),
-        ("Div", "/"),
-        ("Percent", "%"),
-        ("Power", "^"),
-        
-        // --- Punctuation Symbols ---
-        ("LParen", "("),
-        ("RParen", ")"),
-        ("LBrace", "{"),
-        ("RBrace", "}"),
-        ("Comma", ","),
-        ("Semicolon", ";"),
-        ("COLON", ":"),
-
-        // --- Complex Literals ---
-        // Numbers and identifiers are tokenized directly in the lexer.
-    ];
-
-    let lexer = build_lexer(patterns);
+    let lexer = build_lexer();
         let tokens = match lexer.tokenize(source_code) {
         Ok(t) => t,
         Err(e) => {

@@ -20,12 +20,70 @@ fn escape_regex_literal(pattern: &str) -> String {
 
 pub struct Lexer {
     pub dfa: Dfa,
-}
+} 
 
-pub fn build_lexer(patterns: Vec<(&str, &str)>) -> Lexer {
+
+pub fn build_lexer() -> Lexer {
     use crate::gen_lex::nfa::NfaState;
     use crate::gen_lex::utils::Edge;
     use std::collections::HashSet;
+    let patterns = vec![
+        // --- Reserved Keywords ---
+        ("Let", "let"),
+        ("In", "in"),
+        ("If", "if"),
+        ("Else", "else"),
+        ("Elif", "elif"),
+        ("While", "while"),
+        ("For", "for"),
+        ("Function", "function"),
+        ("Print", "print"),
+        ("True", "true"),
+        ("False", "false"),
+        ("Pi", "PI"),
+        ("E", "E"),
+        ("Sin", "sin"),
+        ("Cos", "cos"),
+        ("Tan", "tan"),
+        ("Sqrt", "sqrt"),
+        ("Log", "log"),
+        ("Exp", "exp"),
+        ("Rand", "rand"),
+
+        // --- Multi‑character operators (longest match first) ---
+        ("Arrow", "=>"),
+        ("Eq", "="),
+        ("Assign", ":="),
+        ("EqEq", "=="),
+        ("Neq", "!="),
+        ("Leq", "<="),
+        ("Geq", ">="),
+
+        // --- Single‑character operators ---
+        ("Lt", "<"),
+        ("Gt", ">"),
+        ("And", "&"),
+        ("Or", "|"),
+        ("Not", "!"),
+        ("Plus", "+"),
+        ("Minus", "-"),
+        ("Mult", "*"),
+        ("Div", "/"),
+        ("Percent", "%"),
+        ("Power", "^"),
+        
+        // --- Punctuation Symbols ---
+        ("LParen", "("),
+        ("RParen", ")"),
+        ("LBrace", "{"),
+        ("RBrace", "}"),
+        ("Comma", ","),
+        ("Semicolon", ";"),
+        ("COLON", ":"),
+
+        // --- Complex Literals ---
+        // Numbers and identifiers are tokenized directly in the lexer.
+    ];
 
     let mut states = vec![NfaState { edges: vec![], is_accept: false }];
     let mut token_map = Vec::new();
