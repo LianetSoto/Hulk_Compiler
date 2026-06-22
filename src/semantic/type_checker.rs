@@ -97,7 +97,7 @@ impl TypeChecker {
         tc
     }
 
-    pub fn check(&mut self, program: &mut Program) -> Result<(), Vec<CompilerError>> {
+    pub fn check(&mut self, program: &mut Program, print_typed: bool) -> Result<(), Vec<CompilerError>> {
         // 1. Análisis semántico
         self.visit_program(program);
         
@@ -118,6 +118,12 @@ impl TypeChecker {
         // 5. Verificar que no queden variables de tipo sin resolver en el programa
         if let Err(errors) = self.verify_no_type_vars(program) {
             return Err(errors);
+        }
+
+        if print_typed {
+            let mut printer = PrettyPrinter::new();
+            program.accept(&mut printer);
+            println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
         }
 
         Ok(())
@@ -1304,28 +1310,28 @@ impl Visitor for TypeChecker {
 
                         // Función auxiliar para instanciar (clonar) variables genéricas
                         let mut instantiate = |ty: &HulkType, unifier: &mut Unifier, map: &mut HashMap<usize, HulkType>| -> HulkType {
-    let applied = unifier.apply(ty);
-    if let HulkType::Var(id) = applied {
-        if let Some(new_ty) = map.get(&id) {
-            new_ty.clone()
-        } else {
-            let new_var = unifier.new_var();
-            // Obtener y clonar las restricciones
-            if let Some(constraints) = unifier.get_constraints(id) {
-                let constraints_clone: Vec<Constraint> = constraints.clone();
-                if let Some(new_id) = new_var.get_var_id() {
-                    for c in constraints_clone {
-                        unifier.add_constraint(new_id, c);
-                    }
-                }
-            }
-            map.insert(id, new_var.clone());
-            new_var
-        }
-    } else {
-        applied
-    }
-};
+                            let applied = unifier.apply(ty);
+                            if let HulkType::Var(id) = applied {
+                                if let Some(new_ty) = map.get(&id) {
+                                    new_ty.clone()
+                                } else {
+                                    let new_var = unifier.new_var();
+                                    // Obtener y clonar las restricciones
+                                    if let Some(constraints) = unifier.get_constraints(id) {
+                                        let constraints_clone: Vec<Constraint> = constraints.clone();
+                                        if let Some(new_id) = new_var.get_var_id() {
+                                            for c in constraints_clone {
+                                                unifier.add_constraint(new_id, c);
+                                            }
+                                        }
+                                    }
+                                    map.insert(id, new_var.clone());
+                                    new_var
+                                }
+                            } else {
+                                applied
+                            }
+                        };
 
                         if let Some(orig_ret_var) = self.return_var.get(&expr.func) {
                             if let Some(orig_params) = self.param_vars.get(&expr.func) {
@@ -1989,59 +1995,30 @@ impl Visitor for TypeChecker {
             obj_ty = self.unifier.resolve(&obj_ty);
         }
 
-        // Determinar si el objeto es "self"
-        let is_self = match &*expr.object {
-            Expr::SelfExpr(_) => true,
-            _ => false,
-        };
-
-        if !is_self {
-            // Acceso a atributo desde fuera de la clase → error
-            self.add_type_error(
-                format!("Cannot access attribute '{}' on non-self object", expr.attribute),
-                expr.span,
-            );
-            return HulkType::Error;
-        }
-
-        // El objeto es self, obtener la clase actual
-        let current_type_name = match self.current_type.as_ref() {
-            Some(name) => name,
-            None => {
-                self.add_type_error("Cannot use self outside a type definition".to_string(), expr.span);
+        let class_name = match obj_ty {
+            HulkType::Class(name) => name,
+            HulkType::Protocol(_) => {
+                self.add_type_error("Attribute access on protocol type not supported".to_string(), expr.span);
+                return HulkType::Error;
+            }
+            _ => {
+                self.add_type_error(
+                    format!("Cannot access attribute '{}' on non-class object (type: {:?})", expr.attribute, obj_ty),
+                    expr.span,
+                );
                 return HulkType::Error;
             }
         };
 
-        let type_info = match self.types.get(current_type_name) {
-            Some(info) => info,
-            None => {
-                self.add_type_error(format!("Type '{}' not found", current_type_name), expr.span);
-                return HulkType::Error;
+        if let Some(type_info) = self.types.get(&class_name) {
+            if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
+                expr.ty = Some(attr_ty.clone());
+                return attr_ty.clone();
             }
-        };
-
-        // Verificar que el atributo sea propio de la clase actual (no heredado)
-        if !type_info.own_attributes.contains(&expr.attribute) {
-            self.add_type_error(
-                format!(
-                    "Attribute '{}' is not defined in this class (cannot access inherited private attributes)",
-                    expr.attribute
-                ),
-                expr.span,
-            );
-            return HulkType::Error;
         }
 
-        // Ahora buscar el tipo del atributo (puede estar en attributes, que incluye heredados)
-        if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
-            expr.ty = Some(attr_ty.clone());
-            return attr_ty.clone();
-        }
-
-        // Esto no debería pasar porque own_attributes garantiza que existe
         self.add_type_error(
-            format!("Attribute '{}' not found in type '{}'", expr.attribute, current_type_name),
+            format!("Attribute '{}' not found in type '{}'", expr.attribute, class_name),
             expr.span,
         );
         HulkType::Error

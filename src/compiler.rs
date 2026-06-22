@@ -81,7 +81,7 @@ pub fn compile(source_code: &str) -> Result<(), Vec<CompilerError>> {
 
     // Type checking
     let mut type_checker = TypeChecker::new();
-    if let Err(errors) = type_checker.check(&mut ast) {
+    if let Err(errors) = type_checker.check(&mut ast, true) {
         return Err(errors);             
     }
 
