@@ -1995,30 +1995,64 @@ impl Visitor for TypeChecker {
             obj_ty = self.unifier.resolve(&obj_ty);
         }
 
-        let class_name = match obj_ty {
+        // 1. El objeto debe ser una clase
+        let obj_class = match obj_ty {
             HulkType::Class(name) => name,
-            HulkType::Protocol(_) => {
-                self.add_type_error("Attribute access on protocol type not supported".to_string(), expr.span);
-                return HulkType::Error;
-            }
             _ => {
-                self.add_type_error(
-                    format!("Cannot access attribute '{}' on non-class object (type: {:?})", expr.attribute, obj_ty),
-                    expr.span,
-                );
+                self.add_type_error("Attribute access only allowed on class instances".to_string(), expr.span);
                 return HulkType::Error;
             }
         };
 
-        if let Some(type_info) = self.types.get(&class_name) {
-            if let Some(attr_ty) = type_info.attributes.get(&expr.attribute) {
-                expr.ty = Some(attr_ty.clone());
-                return attr_ty.clone();
+        // 2. Obtener la clase actual (donde se está escribiendo el código)
+        let current_class = match self.current_type.as_ref() {
+            Some(name) => name,
+            None => {
+                self.add_type_error("Attribute access outside of a type definition".to_string(), expr.span);
+                return HulkType::Error;
             }
+        };
+
+        // 3. Solo se puede acceder a atributos de objetos de la misma clase
+        if obj_class != *current_class {
+            self.add_type_error(
+                format!(
+                    "Cannot access attribute '{}' of object of type '{}' from class '{}'",
+                    expr.attribute, obj_class, current_class
+                ),
+                expr.span,
+            );
+            return HulkType::Error;
+        }
+
+        // 4. El atributo debe ser propio de la clase actual (no heredado)
+        let current_type_info = match self.types.get(current_class) {
+            Some(info) => info,
+            None => {
+                self.add_type_error(format!("Type '{}' not found", current_class), expr.span);
+                return HulkType::Error;
+            }
+        };
+
+        if !current_type_info.own_attributes.contains(&expr.attribute) {
+            self.add_type_error(
+                format!(
+                    "Attribute '{}' is not defined in this class (cannot access inherited private attributes)",
+                    expr.attribute
+                ),
+                expr.span,
+            );
+            return HulkType::Error;
+        }
+
+        // 5. Devolver el tipo del atributo
+        if let Some(attr_ty) = current_type_info.attributes.get(&expr.attribute) {
+            expr.ty = Some(attr_ty.clone());
+            return attr_ty.clone();
         }
 
         self.add_type_error(
-            format!("Attribute '{}' not found in type '{}'", expr.attribute, class_name),
+            format!("Attribute '{}' not found in type '{}'", expr.attribute, current_class),
             expr.span,
         );
         HulkType::Error
