@@ -28,4 +28,9 @@ impl HulkType {
             _ => false,
         }
     }
+
+    pub fn get_var_id(&self) -> Option<usize> {
+        if let HulkType::Var(id) = self { Some(*id) } else { None }
+    }
+
 }
