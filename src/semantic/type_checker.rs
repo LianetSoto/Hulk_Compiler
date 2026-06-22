@@ -5,6 +5,7 @@ use super::types::HulkType;
 use crate::error::Span;
 use std::collections::{HashMap, HashSet};
 use crate::semantic::inference::Unifier;
+use crate::semantic::inference::{Constraint};
 
 #[derive(Clone)]
 struct FunctionInfo {
@@ -1053,6 +1054,37 @@ impl TypeChecker {
             _ => resolved,
         }
     }
+
+    fn unify_string_or_number(&mut self, ty: &HulkType, span: Span) {
+        // Si es variable de tipo, unificar con String primero (más general)
+        if let HulkType::Var(_) = ty {
+            if let Err(_) = self.unifier.unify(ty, &HulkType::String) {
+                if let Err(msg) = self.unifier.unify(ty, &HulkType::Number) {
+                    self.add_type_error("Operand must be String or Number".to_string(), span);
+                }
+            }
+        } else {
+            // Si es tipo concreto, verificar compatibilidad
+            let ok = ty.is_compatible_with(&HulkType::String) ||
+                    ty.is_compatible_with(&HulkType::Number);
+            if !ok {
+                self.add_type_error("Operand must be String or Number".to_string(), span);
+            }
+        }
+    }
+
+    fn add_string_or_number_constraint(&mut self, ty: &HulkType, span: Span) {
+        if let HulkType::Var(id) = ty {
+            self.unifier.add_constraint(*id, Constraint::StringOrNumber);
+        } else {
+            // Para tipos concretos, verificar compatibilidad inmediata
+            let ok = ty.is_compatible_with(&HulkType::String) ||
+                    ty.is_compatible_with(&HulkType::Number);
+            if !ok {
+                self.add_type_error("Operand must be String or Number".to_string(), span);
+            }
+        }
+    }
 }
 
 impl Visitor for TypeChecker {
@@ -1130,24 +1162,11 @@ impl Visitor for TypeChecker {
                 }
             }
             BinOp::Concat | BinOp::ConcatSpace => {
-                // Permitir operandos String o Number
-                let left_ok = left_ty.is_compatible_with(&HulkType::String) ||
-                            left_ty.is_compatible_with(&HulkType::Number);
-                if !left_ok {
-                    self.add_type_error(
-                        "Left operand of @ must be String or Number".to_string(),
-                        expr.left.span()
-                    );
-                }
-                let right_ok = right_ty.is_compatible_with(&HulkType::String) ||
-                            right_ty.is_compatible_with(&HulkType::Number);
-                if !right_ok {
-                    self.add_type_error(
-                        "Right operand of @ must be String or Number".to_string(),
-                        expr.right.span()
-                    );
-                }
-                // El resultado de la concatenación siempre es String
+                // Para cada operando, si es una variable de tipo, agregar restricción StringOrNumber
+                self.add_string_or_number_constraint(&left_ty, expr.left.span());
+                self.add_string_or_number_constraint(&right_ty, expr.right.span());
+
+                // El resultado siempre es String
                 if let Err(msg) = self.unifier.unify(&result_var, &HulkType::String) {
                     self.add_type_error(msg, expr.span);
                 }
@@ -1285,19 +1304,28 @@ impl Visitor for TypeChecker {
 
                         // Función auxiliar para instanciar (clonar) variables genéricas
                         let mut instantiate = |ty: &HulkType, unifier: &mut Unifier, map: &mut HashMap<usize, HulkType>| -> HulkType {
-                            let applied = unifier.apply(ty);
-                            if let HulkType::Var(id) = applied {
-                                if let Some(new_ty) = map.get(&id) {
-                                    new_ty.clone()
-                                } else {
-                                    let new_var = unifier.new_var();
-                                    map.insert(id, new_var.clone());
-                                    new_var
-                                }
-                            } else {
-                                applied
-                            }
-                        };
+    let applied = unifier.apply(ty);
+    if let HulkType::Var(id) = applied {
+        if let Some(new_ty) = map.get(&id) {
+            new_ty.clone()
+        } else {
+            let new_var = unifier.new_var();
+            // Obtener y clonar las restricciones
+            if let Some(constraints) = unifier.get_constraints(id) {
+                let constraints_clone: Vec<Constraint> = constraints.clone();
+                if let Some(new_id) = new_var.get_var_id() {
+                    for c in constraints_clone {
+                        unifier.add_constraint(new_id, c);
+                    }
+                }
+            }
+            map.insert(id, new_var.clone());
+            new_var
+        }
+    } else {
+        applied
+    }
+};
 
                         if let Some(orig_ret_var) = self.return_var.get(&expr.func) {
                             if let Some(orig_params) = self.param_vars.get(&expr.func) {
