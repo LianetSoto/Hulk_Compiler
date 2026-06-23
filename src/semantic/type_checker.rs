@@ -1651,8 +1651,21 @@ impl Visitor for TypeChecker {
                 self.declare_var(param.name.clone(), var_ty.clone());
             }
         }
-        // Analizar el cuerpo de la función (ahora 'n' ya está unificado con Number)
+        // Unificar la anotación de retorno (si existe) con la variable de retorno
+        if let Some(ret_ann) = &func.ty_annotation {
+            let resolved_ret = self.resolve_annotation(ret_ann);
+            if let Err(msg) = self.unifier.unify(&ret_var, &resolved_ret) {
+                self.add_type_error(msg, func.span);
+            }
+        }
+
+        // Ahora analizar el cuerpo
         let body_ty = func.body.accept(self);
+
+        // Unificar el cuerpo con la variable de retorno (ya ligada a Boolean, o a la anotación)
+        if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
+            self.add_type_error(msg, func.span);
+        }
 
         let has_protocol_param = func.params.iter().any(|p| {
             matches!(&p.ty, Some(HulkType::Protocol(_)))
