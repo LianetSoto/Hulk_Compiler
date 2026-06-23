@@ -20,7 +20,6 @@ pub struct LlvmCodeGen<'ctx> {
     pub(crate) type_defs: HashMap<String, TypeDef>,
     pub(crate) flattened_types: HashMap<String, FlattenedType>,
     pub(crate) vtables: HashMap<String, GlobalValue<'ctx>>,
-    pub(crate) current_method: Option<Method>,
     pub(crate) vtable_types: HashMap<String, StructType<'ctx>>,
 }
 
@@ -43,7 +42,6 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             type_defs: HashMap::new(),
             flattened_types: HashMap::new(),
             vtables: HashMap::new(),
-            current_method: None,
             vtable_types: HashMap::new(),
         }
     }
