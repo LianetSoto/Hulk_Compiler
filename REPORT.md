@@ -78,8 +78,8 @@ El compilador sigue una arquitectura clásica organizada en varias etapas consec
 ## Requisitos
 
 - Rust (estable)
-- LLVM 15
-- Clang 15
+- LLVM 17
+- Clang 17
 
 ## 1. Compilar el proyecto
 
@@ -99,7 +99,11 @@ Una vez compilado el proyecto, un programa HULK puede compilarse mediante:
 ./hulk programa.hulk
 ```
 
-El compilador ejecuta todas las fases de compilación y, si el programa es correcto, produce el archivo `output.ll`, que contiene el código LLVM IR generado. 
+El compilador ejecuta todas las fases de compilación y, si el programa es correcto, produce:
+
+- El archivo output.ll con el código LLVM IR intermedio.
+
+- El ejecutable nativo ./output (generado automáticamente mediante clang-17 a partir del LLVM IR).
 
 ## 2. Usar Cargo directamente
 

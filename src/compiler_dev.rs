@@ -96,7 +96,7 @@ pub fn compile(source_code: &str, output_ir: &str, execute: bool, filename: &str
 /// Compiles the LLVM IR file to an executable and runs it.
 fn compile_and_run(ir_file: &str, exec_path: &str) -> Result<(), CompilerError> {
     // Compile IR to executable using clang
-    let clang_output = Command::new("clang-15")
+    let clang_output = Command::new("clang-17")
         .args(&[ir_file, "-o", exec_path, "-lm"])
         .output()
         .map_err(|e| CompilerError::IoError(format!("Failed to run clang: {}", e)))?;
