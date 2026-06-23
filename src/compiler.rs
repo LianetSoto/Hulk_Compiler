@@ -46,7 +46,7 @@ pub fn compile(source_code: &str) -> Result<(), Vec<CompilerError>> {
         return Err(vec![err]);          
     }
 
-    let clang_status = Command::new("clang-15")
+    let clang_status = Command::new("clang-17")
         .args(&["output.ll", "-o", "output", "-lm"])
         .status()
         .map_err(|e| vec![CompilerError::IoError(format!("clang failed: {}", e))])?;
