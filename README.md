@@ -81,7 +81,7 @@ El compilador sigue una arquitectura clásica organizada en varias etapas consec
 - LLVM 15
 - Clang 15
 
-## Compilar el proyecto
+## 1. Compilar el proyecto
 
 Para compilar el proyecto y generar el ejecutable se puede usar make:
 
@@ -101,6 +101,12 @@ Una vez compilado el proyecto, un programa HULK puede compilarse mediante:
 
 El compilador ejecuta todas las fases de compilación y, si el programa es correcto, produce el archivo `output.ll`, que contiene el código LLVM IR generado. 
 
+## 2. Usar Cargo directamente
+
+```bash
+cargo run -- programa.hulk
+```
+
 ## Ejecutar el programa generado
 
 ```bash
@@ -108,15 +114,7 @@ El compilador ejecuta todas las fases de compilación y, si el programa es corre
 ```
 El comando ejecuta el programa e imprime resultados.
 
-## Usar Cargo directamente
-
-También es posible ejecutar un programa.hulk directamente con Cargo:
-
-```bash
-cargo run -- programa.hulk
-```
-
-## Modo de desarrollo
+## 3. Modo de desarrollo
 
 Para facilitar la depuración del compilador se incluye un modo de desarrollo:
 
