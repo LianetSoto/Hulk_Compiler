@@ -972,9 +972,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         let func = self.method_functions.get(&func_name)
             .expect("undeclared method");
 
-        // Save the current method so that `base()` can recover its parameters.
-        self.current_method = Some(method.clone());
-
         let mut params = Vec::new();
 
         let struct_ty = self.type_structs[owner_type];
@@ -990,9 +987,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         }
 
         self.compile_llvm_function(*func, params, &mut method.body, method.span)?;
-
-        // Leaving the method body.
-        self.current_method = None;
 
         Ok(self.context.f64_type().const_float(0.0).into())
     }
@@ -1186,8 +1180,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     /// closest ancestor. Besides the implicit `self` argument, all parameters
     /// of the current method are forwarded unchanged to the parent method.
     fn visit_base(&mut self, e: &mut BaseExpr) -> Self::Result {
-
-        // Retrieve the parent type resolved during semantic analysis.
+        // Retrieve the parent type and method name resolved during semantic analysis.
         let base_type = e.base_type.as_ref().ok_or_else(|| {
             CompilerError::CodegenError {
                 msg: "base() without resolved parent type".to_string(),
@@ -1195,7 +1188,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             }
         })?;
 
-        // Retrieve the method name resolved during semantic analysis.
         let method_name = e.method_name.as_ref().ok_or_else(|| {
             CompilerError::CodegenError {
                 msg: "base() without resolved method name".to_string(),
@@ -1203,81 +1195,47 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             }
         })?;
 
-        // Recover the current method so its parameters can be forwarded.
-        let current_method = self.current_method.as_ref().ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: "base() used outside a method".to_string(),
-                span: Some(e.span),
-            }
-        })?;
-
         // Look up the parent implementation.
         let function_name = format!("{}.{}", base_type, method_name);
-
-        let base_func = self.method_functions.get(&function_name).ok_or_else(|| {
+        let base_func = *self.method_functions.get(&function_name).ok_or_else(|| {
             CompilerError::CodegenError {
                 msg: format!("base function '{}' not found", function_name),
                 span: Some(e.span),
             }
         })?;
 
+        // Build argument list.
         let mut args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
 
-        // Load the receiver object (`self`).
+        // First argument: `self` (the receiver object).
         let self_alloca = self.lookup_var("self").ok_or_else(|| {
             CompilerError::CodegenError {
                 msg: "self not found for base()".to_string(),
                 span: Some(e.span),
             }
         })?;
-
         let self_ty = self.hulk_type_to_llvm_type(
             e.ty.as_ref().ok_or_else(|| CompilerError::CodegenError {
                 msg: "type not inferred for self".to_string(),
                 span: Some(e.span),
             })?,
         )?;
-
         let self_value = self.builder
             .build_load(self_ty, self_alloca, "self")
             .map_err(|err| CompilerError::CodegenError {
                 msg: err.to_string(),
                 span: Some(e.span),
             })?;
-
         args.push(self_value.into());
 
-        // Forward every explicit parameter of the current method.
-        for param in &current_method.params {
-
-            // Parameters are stored in local allocas.
-            let param_alloca = self.lookup_var(&param.name).ok_or_else(|| {
-                CompilerError::CodegenError {
-                    msg: format!("parameter '{}' not found", param.name),
-                    span: Some(e.span),
-                }
-            })?;
-
-            let llvm_ty = self.hulk_type_to_llvm_type(
-                param.ty.as_ref().ok_or_else(|| CompilerError::CodegenError {
-                    msg: format!("type not inferred for parameter '{}'", param.name),
-                    span: Some(e.span),
-                })?,
-            )?;
-
-            let param_value = self.builder
-                .build_load(llvm_ty, param_alloca, &param.name)
-                .map_err(|err| CompilerError::CodegenError {
-                    msg: err.to_string(),
-                    span: Some(e.span),
-                })?;
-
-            args.push(param_value.into());
+        // Compile each explicit argument from the `base()` call.
+        for arg_expr in &mut e.args {
+            args.push(arg_expr.accept(self)?.into());
         }
 
         // Emit a direct call to the parent implementation.
         let call_site = self.builder
-            .build_call(*base_func, &args, "base_call")
+            .build_call(base_func, &args, "base_call")
             .map_err(|err| CompilerError::CodegenError {
                 msg: err.to_string(),
                 span: Some(e.span),
