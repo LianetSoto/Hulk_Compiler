@@ -403,7 +403,27 @@ impl Visitor for PrettyPrinter {
             _ => String::new(),
         };
         let ty_str = Self::type_str(&expr.ty);
-        self.write_line(&format!("Base{}{}", base_info, ty_str));
+        self.write_line(&format!("Base{}{} {{", base_info, ty_str));
+        self.indent += 1;
+
+        if !expr.args.is_empty() {
+            self.write_line("args: [");
+            self.indent += 1;
+            for (i, arg) in expr.args.iter_mut().enumerate() {
+                if i > 0 {
+                    self.write_line(",");
+                }
+                arg.accept(self);
+            }
+            if !expr.args.is_empty() {
+                self.write_line("");  // línea en blanco para separar
+            }
+            self.indent -= 1;
+            self.write_line("]");
+        }
+
+        self.indent -= 1;
+        self.write_line("}");
     }
     
     fn visit_attribute_access(&mut self, e: &mut AttributeAccessExpr) -> Self::Result {
