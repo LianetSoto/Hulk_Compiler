@@ -121,12 +121,6 @@ impl TypeChecker {
             return Err(errors);
         }
 
-        if print_typed {
-            let mut printer = PrettyPrinter::new();
-            program.accept(&mut printer);
-            println!("=== Abstract Syntax Tree (with inferred types) ===\n{}", printer.into_string());
-        }
-
         Ok(())
     }
 
@@ -1849,8 +1843,6 @@ impl Visitor for TypeChecker {
         .map(|v| self.unifier.resolve(v))
         .collect();
 
-        println!("Type {} param types: {:?}", type_def.name, resolved_param_types);
-
         type_def.param_types = resolved_param_types;
 
         HulkType::Object
@@ -1978,7 +1970,6 @@ impl Visitor for TypeChecker {
         }
 
         let obj_ty = HulkType::Class(expr.type_name.clone());
-        println!("new returns: {:?}", obj_ty);
         expr.ty = Some(obj_ty.clone());
         obj_ty
     }
