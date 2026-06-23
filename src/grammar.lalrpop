@@ -805,8 +805,14 @@ AtomicExpr: Box<Expr> = {
     })),
 
     <start:@L> <id:"identifier"> "(" <args:Comma<Expr>> ")" <end:@R> => {
-        if id == "base" && args.is_empty() {
-            Box::new(Expr::Base(BaseExpr { span: Span::new(start, end), ty: None, base_type: None, method_name: None }))
+        if id == "base" {
+            Box::new(Expr::Base(BaseExpr {
+                span: Span::new(start, end),
+                ty: None,
+                base_type: None,
+                method_name: None,
+                args,
+            }))
         } else {
             Box::new(Expr::Call(CallExpr { func: id, args, span: Span::new(start, end), ty: None }))
         }
