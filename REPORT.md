@@ -1,143 +1,321 @@
-# HULK Compiler
+# Compilador HULK - Reporte Técnico
 
-HULK (Havana University Language for Kompiers) es un lenguaje de programación **orientado a objetos, orientado a expresiones y con tipado estático**, desarrollado para la asignatura Compilación de la Universidad de La Habana.
+> **Este reporte presenta un resumen ejecutivo** de la arquitectura del compilador y las extensiones implementadas.  
+> Para un análisis detallado de las decisiones de diseño del lenguaje HULK, una discusión más exhaustiva de cada fase del compilador y comparativas con otros lenguajes, consulte el **informe técnico completo** disponible en el repositorio (`informe.pdf`).
 
-Este repositorio contiene una implementación completa de un compilador para HULK escrita en **Rust**, capaz de traducir programas del lenguaje a **LLVM IR**, el cual posteriormente puede compilarse a ejecutables nativos mediante LLVM y Clang.
+
+## Introducción
+
+HULK (Havana University Language for Kompiers) es un lenguaje de programación estáticamente tipado, orientado a expresiones y orientado a objetos, desarrollado en la Universidad de La Habana como parte del curso de Compilación y Lenguajes de Programación. Este documento reporta el diseño, implementación y extensión de un compilador completo para el lenguaje HULK, desarrollado como proyecto semestral.
+
+La arquitectura del compilador sigue un pipeline tradicional de etapas múltiples: análisis léxico, análisis sintáctico, análisis semántico y generación de código. Cada etapa transforma la representación del programa desde el código fuente hasta una representación intermedia, culminando en LLVM IR que puede compilarse a código máquina nativo.
 
 
-# 📋 Características implementadas
+## Extensiones del Lenguaje
 
-La siguiente tabla resume el grado de implementación de las funcionalidades definidas en la especificación de HULK.
+La especificación original de HULK proporciona una base sólida pero carece de ciertas características comunes en lenguajes de programación modernos. Identificamos e implementamos dos extensiones significativas que abordan limitaciones en la expresividad del lenguaje: polimorfismo paramétrico para funciones y tipado estructural mediante protocolos.
 
-| Funcionalidad | Estado |
-|--------------|:------:|
-| Expresiones y operadores | ✅ Completo |
-| Funciones (inline y bloque) | ✅ Completo |
-| Variables y asignación destructiva | ✅ Completo |
-| Condicionales (`if` / `elif` / `else`) | ✅ Completo |
-| Bucles (`while`, `for`) | ✅ Completo |
-| Tipos nominales e herencia | ✅ Completo |
-| Verificación de tipos y conformancia | ✅ Completo |
-| Inferencia de tipos | ✅ Completo |
+### Polimorfismo Paramétrico en Funciones
 
-#  Extensiones implementadas
+#### Motivación
 
-Además de cumplir la especificación del lenguaje, el compilador incorpora dos extensiones principales:
-
-### Polimorfismo paramétrico en funciones
-
-Se añadió soporte para **funciones genéricas**, permitiendo que una misma definición pueda reutilizarse con distintos tipos de argumentos.
-
-La genericidad puede escribirse de forma **explícita**, utilizando el parámetro de tipo reservado `T`,
-
-```hulk
-function id(x: T): T => x;
-```
-
-o de forma **implícita**, omitiendo completamente las anotaciones de tipo,
+En la especificación original de HULK, cada función tiene un único tipo estático y no puede reutilizarse con argumentos de diferentes tipos, incluso cuando su implementación es completamente independiente de los tipos de datos que manipula. Considérese la función identidad:
 
 ```hulk
 function id(x) => x;
 ```
 
-Ambas definiciones son equivalentes. Durante el análisis semántico el compilador determina automáticamente cuándo una función es genérica.
+Conceptualmente, esta función debería aceptar cualquier valor y devolver ese mismo valor. Sin embargo, sin parámetros de tipo, la función debe vincularse a un único tipo concreto durante la compilación. Esto impide reutilizar la misma implementación con diferentes tipos de argumentos, forzando a los programadores a escribir múltiples versiones equivalentes de la misma función.
 
-Posteriormente, un pase de **monomorfización** genera una copia especializada de la función para cada combinación distinta de tipos utilizada en el programa. Como resultado, el backend recibe un AST completamente monomórfico, por lo que el backend no necesita ningún mecanismo adicional para soportar genericidad.
+El siguiente programa expresa una intención natural desde la perspectiva del programador:
+
+```hulk
+print(id(42));
+print(id("Hola"));
+```
+
+Sin embargo, estas dos llamadas no pueden coexistir con una única definición de `id` en el lenguaje original. Esta restricción reduce las capacidades de abstracción del lenguaje y complica la construcción de bibliotecas reutilizables.
+
+#### Implementación
+
+Para superar esta limitación, introdujimos soporte para funciones genéricas, permitiendo que la misma definición se utilice con diferentes tipos de argumentos sin duplicar la implementación.
+
+La genericidad puede declararse explícitamente mediante el parámetro de tipo reservado `T`:
+
+```hulk
+function id(x: T): T => x;
+```
+
+Esto requirió extender la gramática del lenguaje para permitir que las anotaciones de tipo acepten, además de los tipos concretos (Number, String, Boolean y tipos definidos por el usuario), el identificador reservado `T`.
+
+Sin embargo, la anotación explícita es opcional: el programador puede omitir completamente las anotaciones de tipo:
+
+```hulk
+function id(x) => x;
+```
+
+Ambas definiciones son equivalentes, haciendo válido el ejemplo motivador:
+
+```hulk
+print(id(42));
+print(id("Hola"));
+print(id(true));
+```
+
+La extensión mantiene la filosofía de diseño del lenguaje. Así como HULK permite omitir anotaciones de tipo para variables, funciones o atributos, la genericidad puede expresarse implícita o explícitamente, dejando que los programadores decidan cuándo documentar la interfaz de una función y cuándo confiar en la inferencia del compilador.
+
+#### Consideraciones Semánticas
+
+Las funciones genéricas no pueden utilizarse indiscriminadamente con cualquier tipo. Aunque la función sea genérica, los tipos con los que puede instanciarse siguen determinados por las operaciones realizadas en su implementación. Si un tipo particular no satisface dichas operaciones, el compilador detecta la incompatibilidad durante la comprobación de tipos y rechaza la llamada antes de la ejecución.
+
+Esta extensión acerca HULK a lenguajes como Java, C#, C++ y Rust, todos ellos con soporte para polimorfismo paramétrico. Sin embargo, el enfoque difiere en un aspecto importante: mientras estos lenguajes exigen que la genericidad se declare explícitamente en la interfaz de la función, HULK mantiene la anotación como opcional, permitiendo que el compilador infiera el comportamiento genérico cuando sea posible.
 
 ### Protocolos
 
-Se incorporó soporte para **protocolos**, introduciendo un mecanismo de **tipado estructural** que complementa el sistema nominal de clases de HULK.
+#### Motivación
 
-Un protocolo define un conjunto de métodos que un tipo debe proporcionar. La implementación es **implícita**: un tipo conforma un protocolo simplemente por poseer los métodos requeridos con las firmas correctas, sin necesidad de declararlo explícitamente.
+El sistema de tipos original de HULK es puramente nominal: dos tipos solo son compatibles si pertenecen a la misma jerarquía de herencia. Como resultado, dos clases que ofrecen un comportamiento idéntico siguen siendo incompatibles si no comparten un ancestro común.
 
-La verificación se realiza completamente durante el análisis semántico mediante comprobación de conformancia estructural. Una vez finalizada esta fase, toda la información relativa a protocolos desaparece del programa, por lo que el backend no requiere ningún tratamiento especial.
+Esta restricción dificulta la reutilización de código y obliga a diseñar jerarquías de clases con anticipación, incluso cuando solo se desea expresar que diferentes tipos proporcionan el mismo conjunto de operaciones.
 
+Considérese un escenario donde tanto `Circle` como `Square` definen un método `area()`. Sin un supertipo común que declare este método, las operaciones que requieren cálculo de área no pueden aceptar ambos tipos polimórficamente, aunque la interfaz sea idéntica.
 
-# Arquitectura del compilador
+#### Implementación
 
-El compilador sigue una arquitectura clásica organizada en varias etapas consecutivas, donde cada una transforma la representación del programa hasta obtener el código LLVM final.
+Para superar esta limitación, añadimos soporte para protocolos, introduciendo un mecanismo de tipado estructural que complementa el sistema nominal de clases existente. Un tipo conforma a un protocolo cuando proporciona los métodos requeridos por el protocolo, sin necesidad de declarar explícitamente su implementación.
 
-1. **Análisis léxico**  
-   Convierte el código fuente en una secuencia de tokens mediante la simulación de un autómata finito determinista (DFA) construido a partir de expresiones regulares, aplicando la estrategia de longest match y complementado con reconocimiento manual para literales numéricos, cadenas e identificadores.
+Este modelo se asemeja mucho al enfoque de Go y, en cierta medida, al tipado estructural de TypeScript, donde la conformidad se determina implícitamente a partir de la estructura del tipo. En contraste, lenguajes como Java, C#, Rust y Swift requieren declaraciones explícitas de implementación de interfaces o traits.
 
-2. **Análisis sintáctico**  
-   Comprueba que la secuencia de tokens cumple la gramática del lenguaje y construye el Árbol de Sintaxis Abstracta (AST) mediante un parser LALR(1) implementado con LALRPOP.
+**Sintaxis de Declaración de Protocolos:**
 
-3. **Análisis semántico**  
-   Realiza la inferencia y comprobación de tipos, verifica la conformancia con protocolos, resuelve la jerarquía de herencia y construye la representación aplanada de los tipos que será utilizada posteriormente durante la generación de código.
-
-4. **Monomorfización**  
-   Elimina la genericidad generando versiones especializadas de las funciones genéricas para cada combinación concreta de tipos utilizada en el programa.
-
-5. **Generación de código**  
-   Traduce el AST resultante a LLVM IR utilizando la biblioteca Inkwell. Durante esta etapa se generan las estructuras que representan los objetos, las tablas virtuales para el despacho dinámico, las funciones y el punto de entrada del programa.
-
-
-# 🧪 Compilación y ejecución
-
-## Requisitos
-
-- Rust (estable)
-- LLVM 17
-- Clang 17
-
-## 1. Compilar el proyecto
-
-Para compilar el proyecto y generar el ejecutable se puede usar make:
-
-```bash
-make build
+```hulk
+protocol Shape {
+    area(): Number;
+}
 ```
 
-Este comando deja el ejecutable hulk en la raíz del proyecto.
+**Conformidad Implícita:**
 
-## Compilar un programa HULK
+```hulk
+type Circle(radius: Number) {
+    method area() => 3.14159 * radius * radius;
+}
 
-Una vez compilado el proyecto, un programa HULK puede compilarse mediante:
+type Square(side: Number) {
+    method area() => side * side;
+}
 
-```bash
-./hulk programa.hulk
+function printArea(shape: Shape) {
+    print(shape.area());
+}
 ```
 
-El compilador ejecuta todas las fases de compilación y, si el programa es correcto, produce:
+Tanto `Circle` como `Square` conforman implícitamente al protocolo `Shape` porque proporcionan el método `area()` requerido. La función `printArea` puede aceptar cualquiera de los dos tipos sin modificación, logrando polimorfismo sin herencia.
 
-- El archivo output.ll con el código LLVM IR intermedio.
+#### Decisiones de Diseño
 
-- El ejecutable nativo ./output (generado automáticamente mediante clang-17 a partir del LLVM IR).
+Los protocolos pueden extender otros protocolos, creando una estructura jerárquica de requisitos. Esto permite capacidades de abstracción más finas mientras se mantiene la simplicidad de la implementación implícita.
 
-## 2. Usar Cargo directamente
+Las reglas de varianza se diseñaron cuidadosamente: los tipos de retorno son covariantes (un subtipo puede devolver un tipo más específico), y los tipos de parámetros son contravariantes (un subtipo puede aceptar un tipo más general). Esto garantiza la seguridad de tipos mientras se preserva la flexibilidad.
 
-```bash
-cargo run -- programa.hulk
+La principal ventaja del enfoque adoptado es que promueve la reutilización y el desacoplamiento. Un protocolo puede definirse independientemente de los tipos existentes, y cualquier tipo que proporcione los métodos apropiados conformará automáticamente, incluso si fue desarrollado con anterioridad. Esto reduce significativamente el acoplamiento entre componentes y permite una organización de código más flexible.
+
+Como contrapartida, la implementación implícita hace menos evidente qué protocolos satisface un tipo con solo observar su declaración. Mientras que los lenguajes con implementación explícita hacen esta información parte de la interfaz pública, HULK requiere deducir la conformidad a protocolos a partir de los métodos definidos por el tipo.
+
+## Arquitectura del Compilador
+
+El compilador está implementado en Rust y organizado como un pipeline de etapas sucesivas. Cada etapa consume la representación producida por la etapa anterior y genera una nueva representación que acerca el programa a su forma ejecutable final.
+
+### Análisis Léxico
+
+El analizador léxico transforma el código fuente en una secuencia de tokens consumida por el analizador sintáctico. La implementación sigue la arquitectura clásica basada en expresiones regulares y autómatas finitos.
+
+#### Especificación de Tokens
+
+Los elementos léxicos se representan mediante el tipo enumerado `Token`, agrupando palabras reservadas, operadores, símbolos de puntuación, literales, identificadores y las nuevas construcciones añadidas durante la extensión del lenguaje. Los operadores y símbolos fijos se describen mediante expresiones regulares literales, mientras que las palabras reservadas se distinguen después del reconocimiento a partir del lexema.
+
+#### Construcción del Autómata
+
+Cada expresión regular es procesada inicialmente por un analizador que construye su árbol sintáctico, representando las operaciones fundamentales de expresiones regulares: concatenación, unión, clausura de Kleene y símbolos literales.
+
+A partir de este árbol, el algoritmo de Thompson construye un autómata finito no determinista (NFA) con un único estado inicial y un único estado final. Los autómatas para todos los patrones se unifican en un único NFA mediante un nuevo estado inicial conectado por transiciones épsilon.
+
+El autómata resultante se transforma en un autómata finito determinista (DFA) utilizando el algoritmo de construcción de subconjuntos. Cada estado del DFA representa un conjunto de estados del NFA y almacena, cuando corresponde, el token asociado al estado de aceptación de mayor prioridad. Esta conversión permite el reconocimiento de tokens mediante simulación completamente determinista.
+
+#### Estrategia de Tokenización
+
+Durante la compilación, el código fuente se recorre secuencialmente simulando el DFA construido. Desde cada posición de entrada, el analizador avanza mientras exista una transición válida, registrando el último estado de aceptación alcanzado. Cuando no es posible continuar, se genera el token correspondiente al prefijo reconocido más largo, y el proceso continúa desde la siguiente posición.
+
+Este enfoque implementa la estrategia de "coincidencia más larga" (longest match), resolviendo correctamente conflictos entre operadores que comparten prefijos, como `=` y `==`, `:` y `:=`, o `@` y `@@`. Cuando múltiples patrones reconocen el mismo lexema con igual longitud, se respeta la prioridad establecida durante la construcción del autómata.
+
+#### Reconocimiento Manual de Literales
+
+Aunque el DFA reconoce la mayoría de los tokens del lenguaje, ciertos lexemas requieren un tratamiento específico más convenientemente manejado mediante código procedural que mediante expresiones regulares. Antes de iniciar la simulación del autómata, el lexer detecta secuencialmente:
+
+1. Espacios en blanco y comentarios, que se descartan
+2. Literales numéricos enteros y reales
+3. Cadenas de caracteres, incluyendo el procesamiento de secuencias de escape
+4. Identificadores y palabras reservadas, distinguiendo posteriormente entre palabras clave e identificadores definidos por el usuario
+
+### Análisis Sintáctico
+
+El analizador sintáctico verifica que la secuencia de tokens conforma a la gramática del lenguaje y construye el Árbol de Sintaxis Abstracta (AST) cuando la entrada es válida.
+
+#### Gramática y Generación del Parser
+
+La sintaxis de HULK se especifica mediante una gramática libre de contexto donde cada producción describe cómo se combinan los diferentes elementos del lenguaje para formar construcciones válidas. El parser se genera automáticamente a partir de esta gramática utilizando LALRPOP.
+
+Elegimos LALRPOP por varias razones:
+
+1. **Manejo natural de recursividad izquierda**: HULK tiene una amplia variedad de operadores con diferentes precedencias y asociatividades. LALR(1) maneja reglas como `AddSubExpr + AddSubExpr + MulDivExpr` sin problemas, respetando la asociatividad izquierda directamente.
+
+2. **Potencia expresiva**: LALR(1) cubre prácticamente todas las construcciones sintácticas de lenguajes de programación modernos (clases, herencia, protocolos, macros, bucles). Representa el punto óptimo entre la potencia del LR(1) canónico y la compacidad del SLR.
+
+3. **Integración con herramientas**: LALRPOP se integra perfectamente con el ecosistema de Rust, genera código limpio y seguro, y proporciona excelentes mensajes de error para el desarrollo iterativo.
+
+4. **Escalabilidad**: HULK es un lenguaje incremental que añade características complejas. Los analizadores LR escalan mejor a medida que la gramática crece, ya que no requieren reestructuraciones profundas para acomodar nuevas reglas.
+
+#### Transformaciones de Desazúcar
+
+La implementación de la gramática incluye desazúcar de ciertas construcciones del lenguaje. En lugar de introducir nodos específicos en el AST para cada forma sintáctica, algunas construcciones se transforman en otras más fundamentales ya presentes en el núcleo del lenguaje.
+
+**Desazúcar del Bucle For:**
+
+El bucle `for (var in range(from, to)) body` no se traduce a un nuevo nodo en el AST. En su lugar, el parser lo transforma en una combinación de las construcciones `let` y `while`:
+
+```
+for (var in range(from, to)) body
+→
+let var = from in while (var < to) { body; var := var + 1 }
 ```
 
-## Ejecutar el programa generado
+La variable de control se inicializa con `from`, la condición de continuación se expresa como `var < to`, y el cuerpo original del bucle se coloca dentro del bloque `while`, seguido de la asignación destructiva para incrementar la variable. Esto elimina la necesidad de que el backend conozca la construcción `for`.
 
-```bash
-./output
-```
-El comando ejecuta el programa e imprime resultados.
+**Desazúcar del Elif:**
 
-## 3. Modo de desarrollo
+La cláusula `elif` se transforma en expresiones `if-else` anidadas. El parser recolecta todas las ramas `elif` y, partiendo desde la rama `else` final, envuelve cada `elif` en un nodo `IfExpr` estándar. Esto crea una estructura donde la primera condición aparece en el nivel más externo y las condiciones subsiguientes solo se evalúan si las anteriores son falsas.
 
-Para facilitar la depuración del compilador se incluye un modo de desarrollo:
+### Árbol de Sintaxis Abstracta
 
-```bash
-cargo run --features dev -- programa.hulk
-```
+El AST sirve como representación interna del programa, eliminando detalles puramente sintácticos mientras preserva la información necesaria para el análisis semántico y la generación de código.
 
-En este modo pueden visualizarse representaciones intermedias generadas durante la compilación según configuración, como el AST tipado y el resultado del pase de monomorfización, además de ejecutarse automáticamente el código LLVM generado.
+#### Estructura General
 
-# 🧪 Pruebas
+El nodo `Program` actúa como raíz, agrupando diferentes categorías de definiciones: tipos, protocolos, funciones y la expresión principal que constituye el punto de entrada del programa. Esta organización refleja la estructura global de HULK.
 
-El directorio `tests/` contiene programas que ejercitan todas las características implementadas del lenguaje.
+#### Representación de Expresiones
 
-# ⚠️ Limitaciones actuales
+Todas las construcciones evaluables se representan mediante el enumerado `Expr`. Cada variante corresponde a una forma de expresión diferente, como operaciones binarias, llamadas a funciones, condicionales, bloques, bucles, creación de objetos o acceso a atributos.
 
-- No se implementa gestión automática de memoria. Los objetos y cadenas se reservan dinámicamente mediante `malloc` y no son liberados durante la ejecución.
-- Los bucles `for` únicamente permiten iterar sobre `range`.
-- El polimorfismo paramétrico únicamente está soportado en funciones; no se admiten tipos genéricos.
+#### Representación de Declaraciones
 
-# 📖 Documentación
+Las diferentes declaraciones se representan mediante nodos especializados: `FunctionDef`, `TypeDef` y `ProtocolDef`. Cada uno encapsula información específica de la entidad que representa, evitando estructuras excesivamente generales y simplificando el procesamiento posterior.
 
-El informe completo del proyecto se encuentra en docs/informe.pdf. Este documento recoge el análisis crítico del diseño del lenguaje HULK, la descripción detallada de las extensiones implementadas, los fundamentos teóricos de cada fase del compilador y la arquitectura del mismo.
+#### Anotaciones de Tipo
+
+Para los elementos donde el lenguaje permite anotaciones de tipo (parámetros, atributos o tipos de retorno), el AST distingue entre el tipo especificado por el programador (`ty_annotation`) y el tipo finalmente asignado por el compilador (`ty`). Esta separación preserva la información original del programa mientras registra los resultados de la inferencia.
+
+#### Patrón Visitor
+
+Todos los nodos del AST implementan la interfaz `Node`, definiendo el método `accept` correspondiente al patrón de diseño Visitor. Cada fase del compilador implementa su propio visitante para recorrer el árbol y realizar tareas específicas, desacoplando la estructura del AST de las operaciones realizadas sobre él.
+
+### Análisis Semántico
+
+El análisis semántico verifica la corrección lógica del programa y enriquece el AST con la información de tipos necesaria para las etapas posteriores.
+
+#### Inferencia y Comprobación de Tipos
+
+El sistema de tipos se modela mediante el enumerado `HulkType`, representando tanto tipos concretos del lenguaje (Number, String, Boolean, Object y clases definidas por el usuario) como construcciones auxiliares necesarias para la inferencia. Las variables de tipo (`Var`) actúan como marcadores para tipos desconocidos, y el tipo absorbente `Error` propaga fallos sin generar nuevos diagnósticos para expresiones inválidas.
+
+El motor de unificación mantiene una tabla de sustituciones asociando variables de tipo con los tipos concretos a los que se han vinculado, y una tabla de restricciones limitando la posible resolución de cada variable. Durante el recorrido del AST, cada operación impone ecuaciones sobre los tipos de sus operandos.
+
+Actualmente se soportan dos restricciones semánticas:
+
+1. **StringOrNumber**: Impuesta por los operadores de concatenación `@` y `@@`, requiriendo que las variables se vinculen exclusivamente a String o Number, ya que ambos son convertibles a cadena.
+
+2. **ConformsToProtocol**: Asociada con parámetros anotados con un protocolo, requiriendo que cualquier tipo vinculado a la variable implemente estructuralmente todos los métodos del protocolo respetando las reglas de varianza.
+
+#### Aplanamiento de la Jerarquía de Tipos
+
+Antes de que el backend pueda generar código, la jerarquía de clases debe transformarse en una representación plana que elimine las dependencias de herencia. Para cada tipo definido por el usuario, se construye una estructura `FlattenedType` con tres componentes esenciales:
+
+1. Una lista ordenada de todos los atributos que un objeto de esa clase tendrá en memoria (atributos heredados primero, seguidos de los propios)
+2. Un vector de métodos efectivos con sus índices para la Tabla Virtual
+3. La lista de parámetros que el constructor de la clase acepta realmente
+
+Durante este proceso, se resuelven las relaciones de herencia. Si un hijo sobrescribe un método del padre, la nueva implementación ocupa exactamente la misma posición en la VTable, garantizando la compatibilidad con el polimorfismo. Los métodos nuevos reciben índices incrementales al final de la tabla.
+
+#### Gestión de Errores
+
+El análisis semántico se ejecuta mediante un proceso de múltiples fases, acumulando errores en un vector en lugar de detenerse en el primero. Cuando una expresión es inválida, se registra un diagnóstico y se le asigna el tipo `Error`, que actúa como absorbedor. Esto evita cascadas de diagnósticos redundantes y permite a los programadores recibir un informe completo de los problemas en una sola ejecución.
+
+### Monomorfización
+
+Después del análisis semántico, todas las expresiones poseen información de tipos inferida. Sin embargo, las funciones marcadas como genéricas aún contienen variables de tipo en sus firmas y anotaciones del cuerpo. Dado que LLVM IR requiere tipos concretos para generar código, se necesita un pase adicional para eliminar la genericidad antes de la traducción final.
+
+#### Descripción del Proceso
+
+El pase de monomorfización transforma cada función genérica en una o más versiones concretas especializadas para los tipos realmente utilizados en el programa. El proceso se implementa mediante el patrón Visitor.
+
+El núcleo del proceso opera en los siguientes pasos:
+
+1. Los argumentos se visitan recursivamente, asegurando que las llamadas genéricas anidadas se especialicen antes de procesar la llamada actual
+2. Se determina el estado genérico de la función invocada a partir del atributo establecido durante el análisis semántico
+3. Si es genérica, se recolectan los tipos concretos de los argumentos y se genera un nombre único para la especialización mediante "name mangling"
+4. Si la especialización no existe, se clona la definición original y se reemplazan todas las variables de tipo por tipos concretos
+5. La versión especializada se almacena para reutilización futura, y la llamada se reescribe para referenciar la nueva versión concreta
+6. Las definiciones genéricas se eliminan del AST después de completar el procesamiento
+
+#### Manejo de Recursión
+
+Para evitar la generación infinita de especializaciones en presencia de funciones recursivas genéricas, el pase mantiene un conjunto de especializaciones en progreso. Si se detecta un ciclo (intento de instanciar una especialización que ya se está procesando), el compilador emite un error de compilación.
+
+El resultado final es un AST completamente monomórfico que puede traducirse sin que el backend necesite conocer la existencia de la genericidad.
+
+### Generación de Código
+
+La etapa final del compilador traduce el AST a LLVM Intermediate Representation (LLVM IR). En este punto, toda la información necesaria se ha resuelto, incluyendo los tipos de las expresiones, la vinculación de identificadores y la estructura completa de la jerarquía de herencia.
+
+#### Infraestructura LLVM
+
+La generación de código se centraliza en la estructura `LlvmCodeGen`, responsable de mantener el estado durante la traducción. Esta estructura encapsula los principales componentes proporcionados por LLVM: el `Context` que gestiona tipos y objetos compartidos, el `Module` que almacena todas las definiciones globales, y el `Builder` utilizado para insertar secuencialmente instrucciones LLVM IR dentro del bloque básico activo.
+
+La traducción se realiza mediante el patrón Visitor, comenzando la lógica de generación en el nodo raíz `Program`, que coordina las diferentes fases necesarias para construir el módulo LLVM.
+
+#### Declaración de Funciones y Métodos
+
+El backend declara todas las funciones y métodos antes de generar sus respectivos cuerpos. Esta separación es necesaria porque HULK permite llamadas independientemente del orden de definición.
+
+Durante esta primera pasada, solo se construyen las firmas LLVM de cada función, especificando nombre, tipo de retorno y tipos de parámetros. Para los métodos, se añade implícitamente un primer parámetro correspondiente al objeto receptor (`self`), representado como un puntero a la estructura del tipo. Cada método se registra con un nombre completamente calificado de la forma `Tipo.metodo`, evitando conflictos entre métodos con el mismo nombre definidos en clases diferentes.
+
+#### Representación de Objetos
+
+Cada tipo definido por el usuario se traduce a una estructura (struct) de LLVM. La disposición de los campos se obtiene a partir de la representación aplanada construida durante el análisis semántico. Como primer campo de toda estructura se incluye un puntero a la Tabla Virtual, con los atributos ocupando las posiciones restantes.
+
+#### Tablas Virtuales
+
+Cada tipo tiene una única VTable global, compartida por todas sus instancias. Esta estructura centraliza toda la información dinámica de tipos:
+
+1. Un identificador entero único (`type_id`) asignado durante el análisis semántico
+2. Un puntero a la VTable del padre
+3. Un arreglo de punteros a funciones correspondiente a los métodos efectivos del tipo
+
+Los dos primeros campos implementan el mecanismo de identificación dinámica de tipos. El identificador permite reconocer el tipo concreto de un objeto en tiempo de ejecución, mientras que el enlace a la VTable del padre posibilita recorrer la jerarquía de herencia cuando es necesario. Esta información se utiliza para implementar las operaciones `is` y `as`.
+
+El arreglo de métodos implementa el mecanismo de despacho dinámico. Durante el análisis semántico, cada método recibe una posición fija dentro de la VTable. Cuando un método es sobrescrito en una subclase, solo se reemplaza el puntero almacenado.
+
+### Gestión de Errores
+
+El compilador sigue un modelo de detección temprana: cada etapa se ejecuta secuencialmente y verifica que no se hayan producido errores antes de pasar a la siguiente. Si una fase encuentra problemas, el proceso se detiene y los errores se reportan. Cada error incluye la ubicación exacta en el código fuente (línea y columna), una categoría que identifica la fase de origen, y un mensaje descriptivo que explica la causa del fallo.
+
+
+
+## Limitaciones
+
+- El sistema de tipos no incluye polimorfismo paramétrico para tipos (genéricos en clases), solo para funciones.
+- No se soportan iteradores ni colecciones nativas (vectores, listas), lo que limita la expresividad en programas más allá de ejemplos académicos.
+- La inferencia de tipos es relativamente simple y no cubre todos los casos posibles; en algunos escenarios el programador debe proporcionar anotaciones explícitas.
+
+## Conclusión
+
+Este proyecto ha implementado un compilador funcional para HULK, extendiendo el lenguaje con polimorfismo paramétrico y protocolos. La arquitectura en pipeline, basada en Rust y LLVM, ha demostrado ser robusta y modular, facilitando la incorporación de nuevas características. El compilador maneja correctamente el núcleo del lenguaje y las extensiones, generando código nativo eficiente. La experiencia ha permitido aplicar los conocimientos teóricos de compilación en un entorno práctico, y deja abierta la puerta a futuras mejoras que enriquecerán aún más el lenguaje.
