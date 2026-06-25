@@ -497,5 +497,21 @@ impl Visitor for PrettyPrinter {
         self.indent -= 1;
         self.write_line("}");
     }
+
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+        let ty_str = Self::type_str(&expr.ty);
+        self.write_line(&format!("For {{ var: '{}', iterable: {}", expr.var, ty_str));
+        self.indent += 1;
+        self.write_line("iterable:");
+        self.indent += 1;
+        expr.iterable.accept(self);
+        self.indent -= 1;
+        self.write_line("body:");
+        self.indent += 1;
+        expr.body.accept(self);
+        self.indent -= 1;
+        self.indent -= 1;
+        self.write_line("}");
+    }
     
 }

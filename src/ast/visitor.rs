@@ -20,6 +20,7 @@ pub trait Visitor {
     fn visit_block(&mut self, expr: &mut BlockExpr) -> Self::Result;
     fn visit_if(&mut self, expr: &mut IfExpr) -> Self::Result;
     fn visit_while(&mut self, expr: &mut WhileExpr) -> Self::Result;
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result;
     fn visit_type_def(&mut self, ty: &mut TypeDef) -> Self::Result;
     fn visit_attribute(&mut self, attr: &mut Attribute) -> Self::Result;
     fn visit_method(&mut self, m: &mut Method) -> Self::Result;
