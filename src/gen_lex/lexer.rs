@@ -191,7 +191,6 @@ impl Lexer {
                     "new" => LexerToken::New,
                     "protocol" => LexerToken::Protocol,
                     "extends" => LexerToken::Extends,
-                    "range" => LexerToken::Range,
                     "Number" => LexerToken::NumberType,
                     "String" => LexerToken::StringType,
                     "Boolean" => LexerToken::BooleanType,

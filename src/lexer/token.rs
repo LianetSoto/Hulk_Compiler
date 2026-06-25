@@ -15,7 +15,6 @@ pub enum Token {
     For,
     True,
     False,
-    Range,
 
     // 
     LParen,
