@@ -25,6 +25,7 @@ pub enum Expr {
     AttributeAccess(AttributeAccessExpr),
     Is(IsExpr),
     As(AsExpr),
+    For(ForExpr),
 }
 
 impl Expr {
@@ -49,7 +50,8 @@ impl Expr {
             Expr::Base(base_expr) => base_expr.span,
             Expr::AttributeAccess(attr)=> attr.span,
             Expr::Is(is) => is.span,
-            Expr::As(as_expr) => as_expr.span
+            Expr::As(as_expr) => as_expr.span,
+            Expr::For(for_expr) => for_expr.span
         }
     }
 
@@ -75,6 +77,7 @@ impl Expr {
             Expr::AttributeAccess(attr) => attr.ty.as_ref(),
             Expr::Is(is) => is.ty.as_ref(),
             Expr::As(as_expr) => as_expr.ty.as_ref(),
+            Expr::For(for_expr) => for_expr.ty.as_ref(),
         }
     }
 
@@ -100,6 +103,7 @@ impl Expr {
             Expr::AttributeAccess(e) => &mut e.ty,
             Expr::Is(is) => &mut is.ty,
             Expr::As(as_expr) => &mut as_expr.ty,
+            Expr::For(for_expr) => &mut for_expr.ty,
         }
     }
 }
@@ -127,6 +131,7 @@ impl Node for Expr {
             Expr::AttributeAccess(attr) => attr.accept(visitor),
             Expr::Is(is) => is.accept(visitor),
             Expr::As(as_expr) => as_expr.accept(visitor),
+            Expr::For(for_expr) => for_expr.accept(visitor),
         }
     }
 }
@@ -319,6 +324,22 @@ pub struct WhileExpr {
 impl Node for WhileExpr {
     fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
         visitor.visit_while(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForExpr {
+    pub var: String,
+    pub iterable: Box<Expr>,
+    pub body: Box<Expr>,
+    pub span: Span,
+    pub ty: Option<HulkType>,
+}
+
+
+impl Node for ForExpr {
+    fn accept<V: Visitor>(&mut self, visitor: &mut V) -> V::Result {
+        visitor.visit_for(self)
     }
 }
 
