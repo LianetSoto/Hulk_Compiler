@@ -122,6 +122,41 @@ La principal ventaja del enfoque adoptado es que promueve la reutilización y el
 
 Como contrapartida, la implementación implícita hace menos evidente qué protocolos satisface un tipo con solo observar su declaración. Mientras que los lenguajes con implementación explícita hacen esta información parte de la interfaz pública, HULK requiere deducir la conformidad a protocolos a partir de los métodos definidos por el tipo.
 
+### Iterables
+#### Motivación
+En el diseño original de HULK, el bucle `for` estaba restringido a la función predefinida `range`, lo que limitaba su utilidad a la iteración sobre secuencias numéricas. Esta decisión simplificaba la implementación inicial, pero suponía una seria limitación desde el punto de vista de la expresividad del lenguaje. En lenguajes modernos, el `bucle` for se concibe como una construcción universal capaz de recorrer cualquier tipo de datos que exponga una interfaz de iteración.
+
+Sin un mecanismo abstracto de iteración, el desarrollador se ve forzado a escribir bucles `while` manuales para cada tipo de colección, acoplando la lógica de control a la estructura concreta y dificultando la reutilización de código. Además, se pierde la oportunidad de definir iteraciones perezosas o personalizadas —por ejemplo, recorridos con filtros o transformaciones— que son comunes en el desarrollo moderno.
+
+La extensión de iterables aborda estas carencias, permitiendo que cualquier tipo definido por el usuario pueda ser utilizado en un bucle `for`, siempre que implemente un conjunto mínimo de operaciones. De este modo, HULK se alinea con la filosofía de lenguajes que priorizan la composición y la abstracción, como Python, Rust o Java.
+
+#### Implementación
+Para dotar al lenguaje de un mecanismo de iteración uniforme, se definieron dos protocolos fundamentales, inyectados como parte del núcleo del lenguaje:
+
+
+    protocol Iterable {
+        next(): Boolean;   // Avanza al siguiente elemento; devuelve true si hay elemento
+        current(): Object; // Devuelve el elemento actual
+    }
+
+El protocolo `Iterable` establece el contrato mínimo para un recorrido de una sola pasada. Cualquier tipo que proporcione estos métodos con las firmas adecuadas conforma automáticamente a `Iterable`, gracias al sistema de protocolos de HULK (tipado estructural).
+
+Sin embargo, este protocolo solo permite una única iteración: una vez que el iterador ha llegado al final, no puede reiniciarse. Para aquellos tipos que necesitan ser recorridos múltiples veces (por ejemplo, una lista o un rango reutilizable), se definió un segundo protocolo:
+
+
+    protocol Enumerable {
+        iter(): Iterable; // Devuelve un nuevo iterador para la colección
+    }
+Un tipo que implementa `Enumerable` garantiza que cada invocación a iter() devuelve un iterador independiente y en su estado inicial, permitiendo bucles anidados o múltiples recorridos sobre los mismos datos sin interferencias.
+
+Soporte para `range` como iterable predefinido
+La función predefinida `range(inicio, fin` devuelve una instancia del tipo interno `_Range`, que se inyecta durante el análisis semántico. Este tipo posee los atributos `min`, `max` y `current`, e implementa el protocolo `Iterable` mediante los métodos:
+
+
+    next(): Boolean => (self.current := self.current + 1) < self.max;
+    current(): Number => self.current;
+De este modo, `range` se integra perfectamente en el mecanismo de iteración, sin necesidad de un tratamiento especial en el backend más allá de la creación del objeto. Además, al implementar Iterable y no Enumerable, cada iteración sobre un rango produce un nuevo iterador implícitamente, lo que permite múltiples usos de range en distintos bucles.
+
 ## Arquitectura del Compilador
 
 El compilador está implementado en Rust y organizado como un pipeline de etapas sucesivas. Cada etapa consume la representación producida por la etapa anterior y genera una nueva representación que acerca el programa a su forma ejecutable final.
@@ -179,18 +214,6 @@ Elegimos LALRPOP por varias razones:
 
 La implementación de la gramática incluye desazúcar de ciertas construcciones del lenguaje. En lugar de introducir nodos específicos en el AST para cada forma sintáctica, algunas construcciones se transforman en otras más fundamentales ya presentes en el núcleo del lenguaje.
 
-**Desazúcar del Bucle For:**
-
-El bucle `for (var in range(from, to)) body` no se traduce a un nuevo nodo en el AST. En su lugar, el parser lo transforma en una combinación de las construcciones `let` y `while`:
-
-```
-for (var in range(from, to)) body
-→
-let var = from in while (var < to) { body; var := var + 1 }
-```
-
-La variable de control se inicializa con `from`, la condición de continuación se expresa como `var < to`, y el cuerpo original del bucle se coloca dentro del bloque `while`, seguido de la asignación destructiva para incrementar la variable. Esto elimina la necesidad de que el backend conozca la construcción `for`.
-
 **Desazúcar del Elif:**
 
 La cláusula `elif` se transforma en expresiones `if-else` anidadas. El parser recolecta todas las ramas `elif` y, partiendo desde la rama `else` final, envuelve cada `elif` en un nodo `IfExpr` estándar. Esto crea una estructura donde la primera condición aparece en el nivel más externo y las condiciones subsiguientes solo se evalúan si las anteriores son falsas.
@@ -234,6 +257,17 @@ Actualmente se soportan dos restricciones semánticas:
 1. **StringOrNumber**: Impuesta por los operadores de concatenación `@` y `@@`, requiriendo que las variables se vinculen exclusivamente a String o Number, ya que ambos son convertibles a cadena.
 
 2. **ConformsToProtocol**: Asociada con parámetros anotados con un protocolo, requiriendo que cualquier tipo vinculado a la variable implemente estructuralmente todos los métodos del protocolo respetando las reglas de varianza.
+
+#### Manejo de Protocolos e Iterables
+El sistema de tipos incluye soporte para protocolos como mecanismo de abstracción estructural. Durante la fase de registro de símbolos, el `TypeChecker` almacena cada definición de protocolo en una tabla junto con la firma de sus métodos y la referencia a su protocolo padre. La conformidad de una clase a un protocolo se verifica comprobando que la clase implemente todos los métodos requeridos con las firmas adecuadas, respetando las reglas de varianza.
+
+Un caso particularmente relevante es el de los iterables, que responden a la sintaxis `T*` —azúcar sintáctico para el tipo `Iterable(T)`. El compilador registra internamente el protocolo base `Iterable`. Durante el análisis de un tipo definido por el usuario, si la clase implementa `next(): Boolean` y `current(): Object`, se extrae el tipo de retorno de `current()` y se registra en un mapa que asocia ese tipo de elemento con el nombre de la clase.
+
+Cuando el analizador encuentra una expresión o anotación de tipo `Iterable(T)`, aplica una función que, si existe una clase registrada cuyo método `current()` devuelva exactamente `T`, la sustituye por esa clase; en caso contrario, genera automáticamente un protocolo especializado `Iterable_T` que extiende `Iterable` y redefine `current(): T`. Esta transformación se aplica en todos los lugares donde se asigna un tipo a un nodo del AST, de modo que el código generado en fases posteriores nunca recibe un tipo genérico Iterable sin resolver.
+
+El bucle `for` se procesa siguiendo dos pasos. Primero, se evalúa el tipo de la expresión iterable. Si ese tipo conforma al protocolo `Enumerable` (que exige el método `iter(): Iterable`), el iterable se reescribe como una llamada a `iterable.iter()`, transformando así un for sobre una colección múltiple en un for sobre el iterador que esta produce. En segundo lugar, se verifica que el iterable resultante sea una clase concreta que implemente los métodos next() y `current()`; el tipo de los elementos se obtiene del retorno de `current()` y se declara una variable en el ámbito del bucle con ese tipo.
+
+Finalmente, el aplanamiento de la jerarquía no necesita conocer la existencia de iterables ni protocolos, pues todos los tipos Iterable ya han sido sustituidos por clases o protocolos concretos en el AST. La fase de aplanamiento trabaja exclusivamente con las estructuras FlattenedType construidas a partir de las clases, y los métodos que implementan iteradores o enumeradores se tratan como cualquier otro método.
 
 #### Aplanamiento de la Jerarquía de Tipos
 
@@ -304,6 +338,32 @@ Los dos primeros campos implementan el mecanismo de identificación dinámica de
 
 El arreglo de métodos implementa el mecanismo de despacho dinámico. Durante el análisis semántico, cada método recibe una posición fija dentro de la VTable. Cuando un método es sobrescrito en una subclase, solo se reemplaza el puntero almacenado.
 
+#### Traducción del bucle for
+El bucle for de HULK se transpila a una combinación de let y while que sigue el protocolo Iterable. Para una expresión for (x in iterable) cuerpo, la transformación equivale a:
+
+
+    let _iter = iterable in
+        while (_iter.next())
+            let x = _iter.current() in
+                cuerpo
+Esta traducción se realiza directamente en el backend durante la generación de código, sin necesidad de modificar el AST. El bucle resultante invoca dinámicamente los métodos `next()` y `current()` a través de la tabla de métodos virtuales (VTable), lo que permite iterar cualquier objeto que implemente el protocolo Iterable, independientemente de su tipo concreto. El valor de retorno del for es el de la última ejecución del cuerpo, igual que en un while convencional.
+
+#### Soporte para el protocolo Enumerable
+Para que una colección pueda recorrerse múltiples veces, HULK define el protocolo Enumerable, que añade el método `iter()`. Cuando un objeto implementa este protocolo, el for ya no lo itera directamente, sino que primero obtiene un nuevo iterador. La especificación del lenguaje establece la siguiente transformación:
+
+
+    let enumerable = <expresión> in
+        let iterable = enumerable.iter() in
+            while (iterable.next())
+                let x = iterable.current() in
+                    cuerpo
+El backend incorpora esta extensión mediante una comprobación previa al bucle: si el tipo del objeto posee el método iter, emite una llamada virtual a `iter()` y el iterador resultante reemplaza al objeto original.
+
+#### La función range como iterable predefinido
+La función range(inicio, fin) es una construcción built‑in que devuelve un objeto iterable. Para integrarla con el mecanismo de despacho virtual, el analizador semántico inyecta automáticamente el tipo interno _Range, cuyos atributos (min, max, current) y métodos (next(), current()) cumplen el protocolo Iterable. La llamada a range se traduce a la creación de una instancia de _Range, inicializando sus campos con los argumentos recibidos.
+
+Este diseño permite que range se beneficie del mismo mecanismo de iteración que cualquier otra clase definida por el usuario, sin requerir un tratamiento especial en el backend más allá de la construcción inicial del objeto.
+
 ### Gestión de Errores
 
 El compilador sigue un modelo de detección temprana: cada etapa se ejecuta secuencialmente y verifica que no se hayan producido errores antes de pasar a la siguiente. Si una fase encuentra problemas, el proceso se detiene y los errores se reportan. Cada error incluye la ubicación exacta en el código fuente (línea y columna), una categoría que identifica la fase de origen, y un mensaje descriptivo que explica la causa del fallo.
@@ -318,4 +378,4 @@ El compilador sigue un modelo de detección temprana: cada etapa se ejecuta secu
 
 ## Conclusión
 
-Este proyecto ha implementado un compilador funcional para HULK, extendiendo el lenguaje con polimorfismo paramétrico y protocolos. La arquitectura en pipeline, basada en Rust y LLVM, ha demostrado ser robusta y modular, facilitando la incorporación de nuevas características. El compilador maneja correctamente el núcleo del lenguaje y las extensiones, generando código nativo eficiente. La experiencia ha permitido aplicar los conocimientos teóricos de compilación en un entorno práctico, y deja abierta la puerta a futuras mejoras que enriquecerán aún más el lenguaje.
+Este proyecto ha implementado un compilador funcional para HULK, extendiendo el lenguaje con polimorfismo paramétrico iterables y protocolos. La arquitectura en pipeline, basada en Rust y LLVM, ha demostrado ser robusta y modular, facilitando la incorporación de nuevas características. El compilador maneja correctamente el núcleo del lenguaje y las extensiones, generando código nativo eficiente. La experiencia ha permitido aplicar los conocimientos teóricos de compilación en un entorno práctico, y deja abierta la puerta a futuras mejoras que enriquecerán aún más el lenguaje.
