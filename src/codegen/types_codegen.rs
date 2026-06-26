@@ -1,8 +1,8 @@
 use super::llvm::LlvmCodeGen;
 use crate::ast::*;
-use crate::error::CompilerError;
+use crate::error::{CompilerError, Span};
 use inkwell::types::{StructType};
-use inkwell::values::{PointerValue, GlobalValue, FunctionValue};
+use inkwell::values::{PointerValue, GlobalValue, FunctionValue, BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::AddressSpace;
 use crate::semantic::{HulkType, FlattenedType};
 
@@ -348,6 +348,182 @@ impl<'ctx> LlvmCodeGen<'ctx> {
             .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: None })?;
 
         Ok(())
+    }
+
+    //HELPERS
+
+    /// Allocates heap memory for the given struct type, casts the raw pointer
+    /// to the concrete struct pointer, and returns it.
+    pub(crate) fn malloc_and_cast(
+        &self,
+        struct_ty: StructType<'ctx>,
+        name: &str,
+        span: Span,
+    ) -> Result<PointerValue<'ctx>, CompilerError> {
+        let size = struct_ty.size_of().ok_or_else(|| CompilerError::CodegenError {
+            msg: format!("unable to determine size of type '{}'", name),
+            span: Some(span),
+        })?;
+
+        // Allocate raw memory on the heap via `malloc`.
+        let malloc_fn = self.declare_malloc();
+        let obj_ptr = self.builder.build_call(malloc_fn, &[size.into()], "obj")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?
+            .try_as_basic_value().left()
+            .and_then(|v| v.into_pointer_value().into())
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: "malloc did not return a pointer".to_string(),
+                span: Some(span),
+            })?;
+
+        // Cast the raw `i8*` to the concrete struct pointer.
+        let typed_ptr = self.builder.build_pointer_cast(
+            obj_ptr,
+            struct_ty.ptr_type(AddressSpace::default()),
+            &format!("{}_typed", name),
+        ).map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+
+        Ok(typed_ptr)
+    }
+
+    /// Stores the vtable pointer into field 0 of the given object.
+    pub(crate) fn set_vtable(
+        &self,
+        struct_ty: StructType<'ctx>,
+        obj_ptr: PointerValue<'ctx>,
+        type_name: &str,
+        span: Span,
+    ) -> Result<(), CompilerError> {
+        // Look up the vtable global for this type
+        let vtable_global = *self.vtables.get(type_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("vtable not found for type '{}'", type_name),
+                span: Some(span),
+            }
+        })?;
+
+        // Cast the vtable pointer to opaque i8* (field 0 expects this)
+        let opaque_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let vtable_ptr = self.builder.build_pointer_cast(
+            vtable_global.as_pointer_value(),
+            opaque_ptr_ty,
+            "vtable_opaque",
+        ).map_err(|e| CompilerError::CodegenError {
+            msg: e.to_string(),
+            span: Some(span),
+        })?;
+
+        // Store the cast vtable pointer into field 0 using the reusable helper
+        self.store_field(struct_ty, obj_ptr, 0, vtable_ptr.into(), "vtable", span)
+    }
+
+    /// Stores a value into a field of the struct at the given index.
+    pub(crate) fn store_field(
+        &self,
+        struct_ty: StructType<'ctx>,
+        obj_ptr: PointerValue<'ctx>,
+        field_index: u32,
+        value: BasicValueEnum<'ctx>,
+        field_name: &str,
+        span: Span,
+    ) -> Result<(), CompilerError> {
+        let field_ptr = self.builder.build_struct_gep(struct_ty, obj_ptr, field_index, field_name)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+        self.builder.build_store(field_ptr, value)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+        Ok(())
+    }
+
+    /// Performs a virtual method call on the given object using its vtable.
+    ///
+    /// # Arguments
+    /// - `obj_ptr` – pointer to the object (already cast to its concrete struct type)
+    /// - `type_name` – name of the static type of the receiver (used to locate
+    ///   the vtable and flattened type)
+    /// - `method_name` – name of the method to call
+    /// - `extra_args` – additional arguments beyond the implicit `self`, already
+    ///   evaluated as LLVM metadata values
+    /// - `span` – source location for error reporting
+    
+    pub(crate) fn call_virtual_method(
+        &self,
+        obj_ptr: PointerValue<'ctx>,
+        type_name: &str,
+        method_name: &str,
+        extra_args: &[BasicMetadataValueEnum<'ctx>],
+        span: Span,
+    ) -> Result<(BasicValueEnum<'ctx>, HulkType), CompilerError>  {
+        // Obtain the struct type of the receiver
+        let struct_ty = *self.type_structs.get(type_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("unknown type '{}'", type_name),
+                span: Some(span),
+            }
+        })?;
+
+        // Look up the flattened type and find the method descriptor
+        let flat = self.flattened_types.get(type_name).unwrap();
+        let fm = flat.methods.iter()
+            .find(|m| m.method.name == method_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("method '{}' not found in type '{}'", method_name, type_name),
+                span: Some(span),
+            })?;
+
+        // Load the vtable pointer from field 0 of the object
+        let opaque_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let vtable_slot = self.builder.build_struct_gep(struct_ty, obj_ptr, 0, "vtable_slot")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+        let vtable_ptr = self.builder.build_load(opaque_ptr_ty, vtable_slot, "vtable")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?
+            .into_pointer_value();
+
+        // Access the methods array (field 2 of the vtable)
+        let vtable_ty = *self.vtable_types.get(type_name).unwrap();
+        let methods_ptr = self.builder.build_struct_gep(vtable_ty, vtable_ptr, 2, "methods")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+
+        // Index into the methods array using the method's vtable index
+        let method_array_ty = opaque_ptr_ty.array_type(flat.methods.len() as u32);
+        let method_slot = unsafe {
+            self.builder.build_gep(
+                method_array_ty,
+                methods_ptr,
+                &[
+                    self.context.i32_type().const_zero(),
+                    self.context.i32_type().const_int(fm.vtable_index as u64, false),
+                ],
+                "method_slot",
+            )
+        }.map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+
+        let raw_fn = self.builder.build_load(opaque_ptr_ty, method_slot, "method")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?
+            .into_pointer_value();
+
+        // Retrieve the LLVM function signature using the defining type
+        let func_name = format!("{}.{}", fm.defining_type, method_name);
+        let declared = *self.method_functions.get(&func_name).ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: format!("method '{}' not declared", func_name),
+                span: Some(span),
+            }
+        })?;
+        let fn_type = declared.get_type();
+
+        // Build the argument list: self + extra arguments
+        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![obj_ptr.into()];
+        call_args.extend_from_slice(extra_args);
+
+        // Emit the indirect call
+        let call = self.builder.build_indirect_call(fn_type, raw_fn, &call_args, "calltmp")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(span) })?;
+
+        let ret_hulk = fm.method.ty.clone()
+            .unwrap_or(HulkType::Object); 
+
+        let result_value = call.try_as_basic_value().left().unwrap().into();
+            Ok((result_value, ret_hulk))
     }
 
 }
