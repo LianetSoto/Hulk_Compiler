@@ -252,4 +252,8 @@ impl Visitor for MonomorphizationPass {
     fn visit_protocol_method(&mut self, method: &mut ProtocolMethod) -> Self::Result {
         todo!()
     }
+
+    fn visit_for(&mut self, method: &mut ForExpr) -> Self::Result {
+        todo!()
+    }
 }

@@ -349,6 +349,13 @@ impl TypeChecker {
                     }
                     resolve_expr(unifier, &mut as_expr.expr);
                 }
+                Expr::For(for_expr) => {
+                    if let Some(ty) = &for_expr.ty {
+                        for_expr.ty = Some(unifier.resolve(ty));
+                    }
+                    resolve_expr(unifier, &mut for_expr.iterable);
+                    resolve_expr(unifier, &mut for_expr.body);
+                }
             }
         }
 
@@ -757,6 +764,20 @@ impl TypeChecker {
             (HulkType::Class(class_name), HulkType::Protocol(proto_name)) => {
                 self.type_conforms_to_protocol(class_name, &proto_name)
             }
+            (HulkType::Class(class_name), HulkType::Iterable(elem_ty)) => {
+                let type_info = match self.types.get(class_name) {
+                    Some(info) => info,
+                    None => return false,
+                };
+                if !type_info.methods.contains_key("next") || !type_info.methods.contains_key("current") {
+                    return false;
+                }
+                if let Some(method) = type_info.methods.get("current") {
+                    let ret_ty = self.unifier.resolve(&method.return_type);
+                    return self.conforms_to(&ret_ty, elem_ty);
+                }
+                false
+            }
             // 8. Un protocolo no conforma a una clase (excepto Object, ya cubierto)
             _ => false,
         }
@@ -866,6 +887,10 @@ impl TypeChecker {
             }
             Expr::AttributeAccess(a) => {
                 self.substitute_expr(&mut a.object, subst);
+            }
+            Expr::For(for_expr) => {
+                self.substitute_expr(&mut for_expr.iterable, subst);
+                self.substitute_expr(&mut for_expr.body, subst);
             }
             // Los nodos que no contienen subexpresiones (Number, String, Bool, Const, Self, Base) no necesitan acción.
             _ => {}
@@ -1006,6 +1031,13 @@ impl TypeChecker {
                     }
                     resolve_expr(unifier, &mut as_expr.expr);
                 }
+                Expr::For(for_expr) => {
+                    if let Some(ty) = &for_expr.ty {
+                        for_expr.ty = Some(unifier.resolve(ty));
+                    }
+                    resolve_expr(unifier, &mut for_expr.iterable);
+                    resolve_expr(unifier, &mut for_expr.body);
+                }
             }
         }
 
@@ -1084,6 +1116,212 @@ impl TypeChecker {
             }
         }
     }
+
+    fn register_builtin_range_type(&mut self) {
+        use crate::ast::{TypeDef, Attribute, Method, MethodParam, Parent};
+        use crate::semantic::types::HulkType;
+        use crate::error::Span;
+
+        // Evitar registrar dos veces
+        if self.types.contains_key("_Range") {
+            return;
+        }
+
+        // Crear TypeDef para _Range
+        let range_typedef = TypeDef {
+            name: "_Range".to_string(),
+            params: vec!["min".to_string(), "max".to_string()],
+            param_types: vec![HulkType::Number, HulkType::Number],
+            parent: None,
+            attributes: vec![
+                Attribute {
+                    name: "min".to_string(),
+                    init_expr: Box::new(Expr::Variable(VariableExpr {
+                        name: "min".to_string(),
+                        span: Span::new(0, 0),
+                        ty: None,
+                    })),
+                    span: Span::new(0, 0),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Number),
+                },
+                Attribute {
+                    name: "max".to_string(),
+                    init_expr: Box::new(Expr::Variable(VariableExpr {
+                        name: "max".to_string(),
+                        span: Span::new(0, 0),
+                        ty: None,
+                    })),
+                    span: Span::new(0, 0),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Number),
+                },
+                Attribute {
+                    name: "current".to_string(),
+                    init_expr: Box::new(Expr::BinaryOp(BinaryOpExpr {
+                        left: Box::new(Expr::Variable(VariableExpr {
+                            name: "min".to_string(),
+                            span: Span::new(0, 0),
+                            ty: None,
+                        })),
+                        op: BinOp::Sub,
+                        right: Box::new(Expr::Number(NumberExpr {
+                            value: 1.0,
+                            span: Span::new(0, 0),
+                            ty: None,
+                        })),
+                        span: Span::new(0, 0),
+                        ty: None,
+                    })),
+                    span: Span::new(0, 0),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Number),
+                },
+            ],
+            methods: vec![
+                // next()
+                Method {
+                    name: "next".to_string(),
+                    params: vec![],
+                    type_name: None,
+                    body: Box::new(Expr::Block(BlockExpr {
+                        expressions: vec![
+                            Box::new(Expr::DestructiveAssign(DestructiveAssignExpr {
+                                lhs: Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                                    object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::new(0, 0), ty: None })),
+                                    attribute: "current".to_string(),
+                                    span: Span::new(0, 0),
+                                    ty: None,
+                                })),
+                                value: Box::new(Expr::BinaryOp(BinaryOpExpr {
+                                    left: Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                                        object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::new(0, 0), ty: None })),
+                                        attribute: "current".to_string(),
+                                        span: Span::new(0, 0),
+                                        ty: None,
+                                    })),
+                                    op: BinOp::Add,
+                                    right: Box::new(Expr::Number(NumberExpr {
+                                        value: 1.0,
+                                        span: Span::new(0, 0),
+                                        ty: None,
+                                    })),
+                                    span: Span::new(0, 0),
+                                    ty: None,
+                                })),
+                                span: Span::new(0, 0),
+                                ty: None,
+                            })),
+                            Box::new(Expr::BinaryOp(BinaryOpExpr {
+                                left: Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                                    object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::new(0, 0), ty: None })),
+                                    attribute: "current".to_string(),
+                                    span: Span::new(0, 0),
+                                    ty: None,
+                                })),
+                                op: BinOp::Lt,
+                                right: Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                                    object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::new(0, 0), ty: None })),
+                                    attribute: "max".to_string(),
+                                    span: Span::new(0, 0),
+                                    ty: None,
+                                })),
+                                span: Span::new(0, 0),
+                                ty: None,
+                            })),
+                        ],
+                        span: Span::new(0, 0),
+                        ty: None,
+                    })),
+                    span: Span::new(0, 0),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Boolean),
+                },
+                // current()
+                Method {
+                    name: "current".to_string(),
+                    params: vec![],
+                    type_name: None,
+                    body: Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                        object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::new(0, 0), ty: None })),
+                        attribute: "current".to_string(),
+                        span: Span::new(0, 0),
+                        ty: None,
+                    })),
+                    span: Span::new(0, 0),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Number),
+                },
+            ],
+            span: Span::new(0, 0),
+            ty: None,
+        };
+
+        // Insertar en program.types (al principio)
+    }
+
+    fn register_builtin_range(&mut self, program: &mut Program) {
+        // Definición del tipo _Range con atributos min, max, current
+        // y métodos next() y current()
+        let range_typedef = TypeDef {
+            name: "_Range".to_string(),
+            params: vec!["min".to_string(), "max".to_string()],
+            param_types: vec![HulkType::Number, HulkType::Number],
+            parent: None,
+            attributes: vec![
+                Attribute { name: "min".to_string(), init_expr: Box::new(Expr::Variable(VariableExpr { name: "min".to_string(), span: Span::default(), ty: None })), span: Span::default(), ty: None, ty_annotation: Some(HulkType::Number) },
+                Attribute { name: "max".to_string(), init_expr: Box::new(Expr::Variable(VariableExpr { name: "max".to_string(), span: Span::default(), ty: None })), span: Span::default(), ty: None, ty_annotation: Some(HulkType::Number) },
+                Attribute { name: "current".to_string(), init_expr: Box::new(Expr::BinaryOp(BinaryOpExpr { left: Box::new(Expr::Variable(VariableExpr { name: "min".to_string(), span: Span::default(), ty: None })), op: BinOp::Sub, right: Box::new(Expr::Number(NumberExpr { value: 1.0, span: Span::default(), ty: None })), span: Span::default(), ty: None })), span: Span::default(), ty: None, ty_annotation: Some(HulkType::Number) },
+            ],
+            methods: vec![
+                Method {
+                    name: "next".to_string(),
+                    params: vec![],
+                    type_name: None,
+                    body: Box::new(Expr::Block(BlockExpr {
+                        expressions: vec![
+                            Box::new(Expr::DestructiveAssign(DestructiveAssignExpr {
+                                lhs: Box::new(Expr::AttributeAccess(AttributeAccessExpr { object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::default(), ty: None })), attribute: "current".to_string(), span: Span::default(), ty: None })),
+                                value: Box::new(Expr::BinaryOp(BinaryOpExpr { left: Box::new(Expr::AttributeAccess(AttributeAccessExpr { object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::default(), ty: None })), attribute: "current".to_string(), span: Span::default(), ty: None })), op: BinOp::Add, right: Box::new(Expr::Number(NumberExpr { value: 1.0, span: Span::default(), ty: None })), span: Span::default(), ty: None })),
+                                span: Span::default(), ty: None,
+                            })),
+                            Box::new(Expr::BinaryOp(BinaryOpExpr {
+                                left: Box::new(Expr::AttributeAccess(AttributeAccessExpr { object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::default(), ty: None })), attribute: "current".to_string(), span: Span::default(), ty: None })),
+                                op: BinOp::Lt,
+                                right: Box::new(Expr::AttributeAccess(AttributeAccessExpr { object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::default(), ty: None })), attribute: "max".to_string(), span: Span::default(), ty: None })),
+                                span: Span::default(), ty: None,
+                            })),
+                        ],
+                        span: Span::default(),
+                        ty: None,
+                    })),
+                    span: Span::default(),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Boolean),
+                },
+                Method {
+                    name: "current".to_string(),
+                    params: vec![],
+                    type_name: None,
+                    body: Box::new(Expr::AttributeAccess(AttributeAccessExpr {
+                        object: Box::new(Expr::SelfExpr(SelfExpr { span: Span::default(), ty: None })),
+                        attribute: "current".to_string(),
+                        span: Span::default(),
+                        ty: None,
+                    })),
+                    span: Span::default(),
+                    ty: None,
+                    ty_annotation: Some(HulkType::Number),
+                },
+            ],
+            span: Span::default(),
+            ty: None,
+        };
+        // Insertar al principio de la lista de tipos
+        program.types.insert(0, range_typedef);
+    }
+
+    
 }
 
 impl Visitor for TypeChecker {
@@ -1091,6 +1329,7 @@ impl Visitor for TypeChecker {
 
     fn visit_program(&mut self, program: &mut Program) -> Self::Result {
         self.register_builtin_types();
+        self.register_builtin_range(program);
 
         // 1. Registrar funciones ANTES de procesar tipos
         for func in &program.functions {
@@ -1268,13 +1507,14 @@ impl Visitor for TypeChecker {
                 }
                 let start_ty = expr.args[0].accept(self);
                 let end_ty = expr.args[1].accept(self);
-                if let Err(msg) = self.unifier.unify(&start_ty, &HulkType::Number) {
-                    self.add_type_error(msg, expr.args[0].span());
+                if !self.conforms_to(&start_ty, &HulkType::Number) {
+                    self.add_type_error("range start must be Number".to_string(), expr.args[0].span());
                 }
-                if let Err(msg) = self.unifier.unify(&end_ty, &HulkType::Number) {
-                    self.add_type_error(msg, expr.args[1].span());
+                if !self.conforms_to(&end_ty, &HulkType::Number) {
+                    self.add_type_error("range end must be Number".to_string(), expr.args[1].span());
                 }
-                let ret_ty = HulkType::Object;
+                // Devolver el tipo interno _Range
+                let ret_ty = HulkType::Class("_Range".to_string());
                 expr.ty = Some(ret_ty.clone());
                 ret_ty
             }
@@ -1619,6 +1859,8 @@ impl Visitor for TypeChecker {
         body_ty
     }
 
+    
+
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
         let param_vars = self.param_vars.get(&func.name).expect("No param vars").clone();
         let ret_var = self.return_var.get(&func.name).expect("No return var").clone();
@@ -1649,19 +1891,51 @@ impl Visitor for TypeChecker {
             }
         }
         // Unificar la anotación de retorno (si existe) con la variable de retorno
-        if let Some(ret_ann) = &func.ty_annotation {
-            let resolved_ret = self.resolve_annotation(ret_ann);
-            if let Err(msg) = self.unifier.unify(&ret_var, &resolved_ret) {
-                self.add_type_error(msg, func.span);
+        // Guardar la anotación de retorno resuelta (si existe)
+        let resolved_ret_ann = if let Some(ret_ann) = &func.ty_annotation {
+            Some(self.resolve_annotation(ret_ann))
+        } else {
+            None
+        };
+
+        // Si hay anotación y NO es Iterable, unificar la anotación con ret_var
+        if let Some(ret_ann) = &resolved_ret_ann {
+            if let HulkType::Iterable(_) = ret_ann {
+                // No unificar aún; lo haremos después de analizar el cuerpo
+            } else {
+                if let Err(msg) = self.unifier.unify(&ret_var, ret_ann) {
+                    self.add_type_error(msg, func.span);
+                }
             }
         }
 
-        // Ahora analizar el cuerpo
+        // Analizar el cuerpo
         let body_ty = func.body.accept(self);
 
-        // Unificar el cuerpo con la variable de retorno (ya ligada a Boolean, o a la anotación)
-        if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
-            self.add_type_error(msg, func.span);
+        // Si hay anotación y es Iterable, verificar conformancia y unificar ret_var con body_ty
+        if let Some(ret_ann) = &resolved_ret_ann {
+            if let HulkType::Iterable(_) = ret_ann {
+                if !self.conforms_to(&body_ty, ret_ann) {
+                    self.add_type_error(
+                        format!("Return type {:?} does not conform to annotated type {:?}", body_ty, ret_ann),
+                        func.span,
+                    );
+                }
+                // Ligar ret_var al tipo real del cuerpo
+                if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
+                    self.add_type_error(msg, func.span);
+                }
+            } else {
+                // Ya unificamos la anotación antes, ahora unificar el cuerpo con ret_var
+                if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
+                    self.add_type_error(msg, func.span);
+                }
+            }
+        } else {
+            // Sin anotación, unificar cuerpo con ret_var
+            if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
+                self.add_type_error(msg, func.span);
+            }
         }
 
         let has_protocol_param = func.params.iter().any(|p| {
@@ -2359,5 +2633,52 @@ impl Visitor for TypeChecker {
         expr.ty = Some(type_given.clone());
         type_given
     }
+
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+    let iterable_ty = expr.iterable.accept(self);
+
+    // Verificar que el iterable sea una clase que tenga next() y current()
+    let elem_ty = match &iterable_ty {
+        HulkType::Class(class_name) => {
+            let type_info = match self.types.get(class_name) {
+                Some(info) => info,
+                None => {
+                    self.add_type_error(
+                        format!("Type '{}' not found", class_name),
+                        expr.iterable.span(),
+                    );
+                    return HulkType::Error;
+                }
+            };
+            if !type_info.methods.contains_key("next") || !type_info.methods.contains_key("current") {
+                self.add_type_error(
+                    format!("Type '{}' does not implement the iterable protocol (missing next() or current())", class_name),
+                    expr.iterable.span(),
+                );
+                return HulkType::Error;
+            }
+            // Inferir el tipo del elemento desde el método current()
+            type_info.methods.get("current")
+                .map(|m| self.unifier.resolve(&m.return_type))
+                .unwrap_or(HulkType::Object)
+        }
+        HulkType::Iterable(inner) => *inner.clone(), // para T* (opcional)
+        _ => {
+            self.add_type_error(
+                format!("Expected an iterable (class with next() and current()), got {:?}", iterable_ty),
+                expr.iterable.span(),
+            );
+            return HulkType::Error;
+        }
+    };
+
+    self.enter_scope();
+    self.declare_var(expr.var.clone(), elem_ty);
+    let body_ty = expr.body.accept(self);
+    self.exit_scope();
+
+    expr.ty = Some(body_ty.clone());
+    body_ty
+}
 
 }

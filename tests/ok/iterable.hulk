@@ -13,7 +13,7 @@ type Range(min: Number, max: Number) {
     // Método next(): actualiza current y devuelve true si hay más elementos
     next(): Boolean {
         self.current := self.current + 1;
-        self.current < max
+        self.current < self.max
     }
 
     // Método current(): devuelve el valor actual (Number, subtipo de Object)

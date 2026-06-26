@@ -1405,4 +1405,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         todo!()
     }
 
+    fn visit_for(&mut self, _method: &mut ForExpr) -> Self::Result {
+        todo!()
+    }
 }
