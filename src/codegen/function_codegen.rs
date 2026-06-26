@@ -248,6 +248,42 @@ impl<'ctx> LlvmCodeGen<'ctx> {
         Ok(result.into())
     }
 
+    /// Compiles a call to `range(start, end)` by constructing a `_Range` object.
+    ///
+    /// The `_Range` type is a built-in class that implements the `Iterable`
+    /// protocol (methods `next` and `current`).  This function allocates a
+    /// `_Range` instance on the heap, initialises its vtable, `min`, `max`,
+    /// and `current` fields, and returns a pointer to the new object.
+
+    pub(crate) fn compile_range_call(
+        &mut self,
+        expr: &mut CallExpr,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let start = expr.args[0].accept(self)?.into_float_value();
+        let end   = expr.args[1].accept(self)?.into_float_value();
+
+        let struct_ty = *self.type_structs.get("_Range")
+            .ok_or_else(|| CompilerError::CodegenError { msg: "_Range not found".into(), span: Some(expr.span) })?;
+
+        // 1. Allocate and cast
+        let obj = self.malloc_and_cast(struct_ty, "_Range", expr.span)?;
+
+        // 2. Set vtable
+        self.set_vtable(struct_ty, obj, "_Range", expr.span)?;
+
+        // 3. Store fields
+        let f64_type = self.context.f64_type();
+        self.store_field(struct_ty, obj, 1, start.into(), "min", expr.span)?;
+        self.store_field(struct_ty, obj, 2, end.into(), "max", expr.span)?;
+
+        let one = f64_type.const_float(1.0);
+        let init_current = self.builder.build_float_sub(start, one, "init_current")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        self.store_field(struct_ty, obj, 3, init_current.into(), "current", expr.span)?;
+
+        Ok(obj.into())
+    }
+
     /// Declares a math function that takes one `f64` and returns `f64`. (reusable helper)
     fn declare_math_function(&self, name: &str) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function(name) {

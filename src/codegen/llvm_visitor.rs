@@ -485,6 +485,7 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             "rand" => return self.compile_rand_call(expr),
             "log"  => return self.compile_log_call(expr),
             "print" => return self.compile_print_call(expr),
+            "range" => return self.compile_range_call(expr),
             _ => { /* continue with generic lookup */ }
         }
 
@@ -775,6 +776,183 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
         Ok(phi.as_basic_value().into())
     }   
 
+    /// Generates LLVM IR for a `for` loop.
+    ///
+    /// The `for` loop follows the semantics defined by the HULK specification:
+    /// it is equivalent to a `let` + `while` combination that uses the
+    /// `Iterable` protocol (methods `next()` and `current()`).  If the
+    /// iterable object also implements the `Enumerable` protocol (method
+    /// `iter()`), that method is called first to obtain a fresh `Iterable`.
+    ///
+    /// # Implementation outline
+    /// 1. Evaluate the iterable expression and obtain its type.
+    /// 2. (Optional) If the iterable is an `Enumerable`, call `iter()` to
+    ///    get a fresh iterator and update the type information.
+    /// 3. Determine the element type produced by `current()`.
+    /// 4. Prepare an `alloca` slot to accumulate the last body value (the
+    ///    `for` expression's return value) and an `alloca` slot to store
+    ///    the iterable pointer across blocks.
+    /// 5. Create the basic blocks: `for.cond`, `for.body`, `for.end`.
+    /// 6. In the condition block, load the iterable, call `next()` and
+    ///    branch to `for.body` or `for.end`.
+    /// 7. In the body block, call `current()`, assign the iteration
+    ///    variable, execute the body, store the result into the
+    ///    accumulation slot, and jump back to the condition.
+    /// 8. In the exit block, load the accumulated value and return it.
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+
+        // Evaluate the iterable expression → pointer to the object
+        let iterable_val = expr.iterable.accept(self)?;
+        let mut iter_ptr = iterable_val.into_pointer_value();
+
+        // Obtain the HULK type of the iterable (must be a class)
+        let iter_hulk_ty = expr.iterable.get_type().ok_or_else(|| {
+            CompilerError::CodegenError {
+                msg: "type not inferred for iterable".into(),
+                span: Some(expr.span),
+            }
+        })?;
+
+        let mut iter_type_name = match iter_hulk_ty {
+            HulkType::Class(name) => name.clone(),
+            _ => return Err(CompilerError::CodegenError {
+                msg: "for loop requires an iterable object".into(),
+                span: Some(expr.span),
+            }),
+        };
+
+        // If the iterable implements Enumerable, call iter()
+        // to get a fresh Iterable.
+        {
+            let flat = self.flattened_types.get(&iter_type_name).unwrap();
+            let has_iter = flat.methods.iter().any(|m| m.method.name == "iter");
+            if has_iter {
+                // Call iter() on the enumerable object
+                let (fresh_iter_val, iter_return_hulk) = self.call_virtual_method(
+                    iter_ptr,
+                    &iter_type_name,
+                    "iter",
+                    &[],
+                    expr.span,
+                )?;
+                iter_ptr = fresh_iter_val.into_pointer_value();
+
+                // The new iterator has its own type
+                if let HulkType::Class(name) = iter_return_hulk {
+                    iter_type_name = name;
+                }
+            }
+        }
+
+        // Obtain the element type produced by current()
+        let flat = self.flattened_types.get(&iter_type_name).unwrap();
+
+        let current_method = flat.methods.iter()
+            .find(|m| m.method.name == "current")
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("iterable type '{}' lacks 'current' method", iter_type_name),
+                span: Some(expr.span),
+            })?;
+
+        let elem_hulk_ty = current_method.method.ty
+            .as_ref()
+            .unwrap_or(&HulkType::Number); // TypeChecker guarantees it is present
+
+        let elem_llvm_ty = self.hulk_type_to_llvm_type(elem_hulk_ty)?;
+
+        // Prepare the accumulation variable for the for-loop value
+
+        let body_hulk_ty = expr.ty.as_ref().ok_or_else(|| CompilerError::CodegenError {
+            msg: "type not inferred for for expression".into(),
+            span: Some(expr.span),
+        })?;
+        let body_llvm_ty = self.hulk_type_to_llvm_type(body_hulk_ty)?;
+        let last_val_alloca = self.builder.build_alloca(body_llvm_ty, "for.last")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        let default_body_val = self.default_value_for_type(body_hulk_ty)?;
+        self.builder.build_store(last_val_alloca, default_body_val)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // Save the iterable in an alloca so we can load it in each iteration
+        let iter_llvm_ty = self.hulk_type_to_llvm_type(&iter_hulk_ty)?;
+        let iter_alloca = self.builder.build_alloca(iter_llvm_ty, "_iter")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        self.builder.build_store(iter_alloca, iter_ptr)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // Create basic blocks
+        let cond_block = self.context.append_basic_block(
+            self.current_function.unwrap(), "for.cond");
+        let body_block = self.context.append_basic_block(
+            self.current_function.unwrap(), "for.body");
+        let end_block  = self.context.append_basic_block(
+            self.current_function.unwrap(), "for.end");
+
+        self.builder.build_unconditional_branch(cond_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // -- Condition block --
+        self.builder.position_at_end(cond_block);
+        // Load the pointer to the iterable
+        let iter_val_loaded = self.builder.build_load(iter_llvm_ty, iter_alloca, "_iter")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        let iter_ptr_loaded = iter_val_loaded.into_pointer_value();
+
+        // Call next()
+        let (next_val, _) = self.call_virtual_method(
+            iter_ptr_loaded,
+            &iter_type_name,
+            "next",
+            &[],
+            expr.span,
+        )?;
+        let has_next = next_val.into_int_value();
+
+        self.builder.build_conditional_branch(has_next, body_block, end_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // -- Body block --
+        self.builder.position_at_end(body_block);
+
+        // Load iterable again (it may have been modified in next(), though _Range does not)
+        let iter_val_loaded2 = self.builder.build_load(iter_llvm_ty, iter_alloca, "_iter")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        let iter_ptr_loaded2 = iter_val_loaded2.into_pointer_value();
+
+        // Call current()
+        let (current_val, _) = self.call_virtual_method(
+            iter_ptr_loaded2,
+            &iter_type_name,
+            "current",
+            &[],
+            expr.span,
+        )?;
+
+        // Assign the iteration variable
+        let var_alloca = self.builder.build_alloca(elem_llvm_ty, &expr.var)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        self.builder.build_store(var_alloca, current_val)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+        self.insert_var(expr.var.clone(), var_alloca);
+
+        // Execute the body
+        let body_val = expr.body.accept(self)?;
+        // Store the value of this iteration
+        self.builder.build_store(last_val_alloca, body_val)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // Jump back to the condition
+        self.builder.build_unconditional_branch(cond_block)
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        // Exit block
+        self.builder.position_at_end(end_block);
+        let result = self.builder.build_load(body_llvm_ty, last_val_alloca, "for.result")
+            .map_err(|e| CompilerError::CodegenError { msg: e.to_string(), span: Some(expr.span) })?;
+
+        Ok(result.into())
+    }
+
     // Types
 
     fn visit_type_def(&mut self, type_def: &mut TypeDef) -> Self::Result {
@@ -800,100 +978,42 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
 
         // Look up the type definition and its LLVM struct type.
-        let type_def = self.type_defs.get(&expr.type_name).ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: format!("unknown type '{}'", expr.type_name),
-                span: Some(expr.span),
-            }
-        })?.clone();
+        let type_name = &expr.type_name;
 
-        let struct_ty = self.type_structs[&expr.type_name];
+        let struct_ty = *self.type_structs.get(type_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("unknown type '{}'", type_name),
+                span: Some(expr.span),
+            })?;
+
+        let type_def = self.type_defs.get(type_name)
+            .ok_or_else(|| CompilerError::CodegenError {
+                msg: format!("type definition not found for '{}'", type_name),
+                span: Some(expr.span),
+            })?.clone();
 
         // Retrieve the flattened type (contains inherited attributes).
-        let mut flat = self.flattened_types.get(&expr.type_name).ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: format!("flattened type '{}' not found", expr.type_name),
-                span: Some(expr.span),
-            }
-        })?.clone();
-
-        // Allocate raw memory on the heap via `malloc`.
-        let malloc_fn = self.declare_malloc();
-        let size_val = struct_ty.size_of()
+        let mut flat = self.flattened_types.get(type_name)
             .ok_or_else(|| CompilerError::CodegenError {
-                msg: format!("unable to determine size of type '{}'", expr.type_name),
+                msg: format!("flattened type '{}' not found", type_name),
                 span: Some(expr.span),
-            })?;
+            })?.clone();
 
-        let obj_ptr = self.builder.build_call(malloc_fn, &[size_val.into()], "new_obj")
-            .map_err(|e| CompilerError::CodegenError {
-                msg: format!("malloc failed: {}", e),
-                span: Some(expr.span),
-            })?
-            .try_as_basic_value().left()
-            .and_then(|v| v.into_pointer_value().into())
-            .ok_or_else(|| CompilerError::CodegenError {
-                msg: "malloc did not return a pointer".to_string(),
-                span: Some(expr.span),
-            })?;
+        // Allocate and cast
+        let obj = self.malloc_and_cast(struct_ty, type_name, expr.span)?;
 
-        // Cast the raw `i8*` to the concrete struct pointer.
-        let typed_ptr = self.builder.build_pointer_cast(
-            obj_ptr,
-            struct_ty.ptr_type(inkwell::AddressSpace::default()),
-            "typed_obj",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: format!("bitcast failed: {}", e),
-            span: Some(expr.span),
-        })?;
+        // Store vtable
+        self.set_vtable(struct_ty, obj, type_name, expr.span)?;
 
-        // Initialize the vtable pointer.
-        let vtable_global = self.vtables.get(&expr.type_name).ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: format!("vtable not found for type '{}'", expr.type_name),
-                span: Some(expr.span),
-            }
-        })?;
-
-        // Field 0 is the vtable pointer.
-        let vtable_slot = self.builder.build_struct_gep(
-            struct_ty,
-            typed_ptr,
-            0,
-            "vtable_slot",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: format!("GEP for vtable slot failed: {}", e),
-            span: Some(expr.span),
-        })?;
-
-        // The object struct expects an opaque `i8*`, so we cast the vtable
-        // pointer before storing it.
-        let opaque_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-        let vtable_ptr = self.builder.build_pointer_cast(
-            vtable_global.as_pointer_value(),
-            opaque_ptr_ty,
-            "vtable_opaque",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: format!("pointer cast for vtable failed: {}", e),
-            span: Some(expr.span),
-        })?;
-
-        self.builder.build_store(vtable_slot, vtable_ptr)
-            .map_err(|e| CompilerError::CodegenError {
-                msg: format!("store vtable failed: {}", e),
-                span: Some(expr.span),
-            })?;
-
-        // Evaluate constructor arguments and bind them in a fresh scope
-        // so that attribute initializers can reference them.
+        // Bind constructor arguments in a scope
         self.push_scope();
-
         for (param_name, arg_expr) in type_def.params.iter().zip(&mut expr.args) {
             let arg_val = arg_expr.accept(self)?;
-            let hulk_ty = arg_expr.get_type().ok_or_else(|| CompilerError::CodegenError {
-                msg: "type not inferred for argument".to_string(),
-                span: Some(expr.span),
-            })?;
+            let hulk_ty = arg_expr.get_type()
+                .ok_or_else(|| CompilerError::CodegenError {
+                    msg: "type not inferred for argument".to_string(),
+                    span: Some(expr.span),
+                })?;
             let llvm_ty = self.hulk_type_to_llvm_type(hulk_ty)?;
             let alloca = self.builder.build_alloca(llvm_ty, param_name)
                 .map_err(|e| CompilerError::CodegenError {
@@ -908,28 +1028,14 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
             self.insert_var(param_name.clone(), alloca);
         }
 
-        // Initialize attributes starting from field 1.
+        // Initialize attributes (fields start at index 1)
         for (i, attr) in flat.attributes.iter_mut().enumerate() {
             let init_val = attr.init_expr.accept(self)?;
-            let field_ptr = self.builder.build_struct_gep(
-                struct_ty,
-                typed_ptr,
-                (i + 1) as u32,
-                &format!("field_{}", i),
-            ).map_err(|e| CompilerError::CodegenError {
-                msg: format!("GEP failed: {}", e),
-                span: Some(expr.span),
-            })?;
-            self.builder.build_store(field_ptr, init_val)
-                .map_err(|e| CompilerError::CodegenError {
-                    msg: e.to_string(),
-                    span: Some(expr.span),
-                })?;
+            self.store_field(struct_ty, obj, (i + 1) as u32, init_val, &attr.name, expr.span)?;
         }
 
-        // Pop the argument scope and return the fully initialized object.
         self.pop_scope();
-        Ok(typed_ptr.into())
+        Ok(obj.into())
     }
 
     fn visit_attribute_access(&mut self, expr: &mut AttributeAccessExpr) -> Self::Result {
@@ -1029,148 +1135,34 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
 
     /// Generates LLVM IR for a method call expression (`obj.method(args)`).
     ///
-    /// This implements **dynamic dispatch** via the object's virtual method table (vtable).
-    /// The vtable layout is `{ i32 (type_id), ptr (parent_vtable), [N x ptr] (methods) }`.
+    /// This implements **dynamic dispatch** via the object's virtual method table.
     fn visit_method_call(&mut self, expr: &mut MethodCallExpr) -> Self::Result {
-        // Evaluate the receiver object 
-        let obj_ptr = expr.object.accept(self)?.into_pointer_value();
+        // Evaluate the receiver and obtain its pointer
+        let obj_val = expr.object.accept(self)?;
+        let obj_ptr = obj_val.into_pointer_value();
 
-        // Obtain the static type of the receiver 
+        // Determine the static type of the receiver (must be a class)
         let hulk_ty = expr.object.get_type().ok_or_else(|| CompilerError::CodegenError {
             msg: "type not inferred for object".into(),
             span: Some(expr.span),
         })?;
-
         let type_name = match hulk_ty {
             HulkType::Class(name) => name.as_str(),
-            _ => {
-                return Err(CompilerError::CodegenError {
-                    msg: "method call on non-object".into(),
-                    span: Some(expr.span),
-                });
-            }
+            _ => return Err(CompilerError::CodegenError {
+                msg: "method call on non-object".into(),
+                span: Some(expr.span),
+            }),
         };
 
-        // Look up the flattened type and find the matching method 
-        let flat = self.flattened_types.get(type_name).ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: format!("flattened type '{}' not found", type_name),
-                span: Some(expr.span),
-            }
-        })?;
-
-        let fm = flat.methods
-            .iter()
-            .find(|m| m.method.name == expr.method && m.method.params.len() == expr.args.len())
-            .ok_or_else(|| CompilerError::CodegenError {
-                msg: format!("method '{}' with {} args not found", expr.method, expr.args.len()),
-                span: Some(expr.span),
-            })?;
-
-        // Load the vtable pointer from the object (field 0) 
-        let struct_ty = self.type_structs[type_name];
-
-        let vtable_slot = self.builder.build_struct_gep(
-            struct_ty,
-            obj_ptr,
-            0,                  
-            "vtable_slot",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: e.to_string(),
-            span: Some(expr.span),
-        })?;
-
-        // The object stores an opaque i8* pointer to the vtable.
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-        let vtable_ptr = self.builder.build_load(
-            ptr_ty,
-            vtable_slot,
-            "vtable",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: e.to_string(),
-            span: Some(expr.span),
-        })?
-        .into_pointer_value();
-
-        // Access the methods array inside the vtable 
-        let vtable_ty = self.vtable_types.get(type_name).ok_or_else(|| {
-            CompilerError::CodegenError {
-                msg: format!("vtable type not found for '{}'", type_name),
-                span: Some(expr.span),
-            }
-        })?;
-
-        // GEP to field 2 (the methods array)
-        let methods_ptr = self.builder.build_struct_gep(
-            *vtable_ty,
-            vtable_ptr,
-            2,                  // field 2 = methods array
-            "methods",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: e.to_string(),
-            span: Some(expr.span),
-        })?;
-
-        // Index into the array to get the specific method slot.
-        // methods_ptr points to the array, so we need GEP with [0, vtable_index].
-        let method_array_ty = ptr_ty.array_type(flat.methods.len() as u32);
-        let method_slot = unsafe {
-            self.builder.build_gep(
-                method_array_ty,
-                methods_ptr,
-                &[
-                    self.context.i32_type().const_zero(),
-                    self.context.i32_type().const_int(fm.vtable_index as u64, false),
-                ],
-                "method_slot",
-            )
-        }.map_err(|e| CompilerError::CodegenError {
-            msg: e.to_string(),
-            span: Some(expr.span),
-        })?;
-
-        // Load the function pointer from the slot 
-        let raw_fn = self.builder.build_load(
-            ptr_ty,
-            method_slot,
-            "method",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: e.to_string(),
-            span: Some(expr.span),
-        })?
-        .into_pointer_value();
-
-        // Retrieve the LLVM function signature using the DEFINING type 
-        let func_name = format!("{}.{}", fm.defining_type, expr.method);
-
-        let declared = self.method_functions.get(&func_name)
-            .ok_or_else(|| CompilerError::CodegenError {
-                msg: format!("method '{}' not declared", func_name),
-                span: Some(expr.span),
-            })?;
-
-        let fn_type = declared.get_type();
-
-        // Build argument list (self + user arguments) 
-        let mut args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
-        args.push(obj_ptr.into());               // the receiver object (self)
-
+        // Evaluate the explicit arguments
+        let mut extra_args = Vec::new();
         for arg in &mut expr.args {
-            args.push(arg.accept(self)?.into()); // evaluate each argument
+            extra_args.push(arg.accept(self)?.into());
         }
 
-        // Emit indirect call 
-        let call = self.builder.build_indirect_call(
-            fn_type,
-            raw_fn,
-            &args,
-            "calltmp",
-        ).map_err(|e| CompilerError::CodegenError {
-            msg: e.to_string(),
-            span: Some(expr.span),
-        })?;
-
-        Ok(call.try_as_basic_value().left().unwrap().into())
+        // Delegate to the virtual call helper
+        let (fresh_iter_val, _) = self.call_virtual_method(obj_ptr, type_name, &expr.method, &extra_args, expr.span)?;
+        Ok(fresh_iter_val)   
     }
 
     /// Generates LLVM IR for the `base()` expression.
@@ -1402,10 +1394,6 @@ impl<'ctx> Visitor for LlvmCodeGen<'ctx> {
     }
 
     fn visit_protocol_method(&mut self, _method: &mut ProtocolMethod) -> Self::Result {
-        todo!()
-    }
-
-    fn visit_for(&mut self, _method: &mut ForExpr) -> Self::Result {
         todo!()
     }
 }

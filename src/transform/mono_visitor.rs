@@ -186,6 +186,12 @@ impl Visitor for MonomorphizationPass {
         Ok(())
     }
 
+    fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
+        expr.iterable.accept(self)?;
+        expr.body.accept(self)?;
+        Ok(())
+    }
+
     fn visit_function_def(&mut self, func: &mut FunctionDef) -> Self::Result {
         func.body.accept(self)?;
         Ok(())
@@ -253,7 +259,4 @@ impl Visitor for MonomorphizationPass {
         todo!()
     }
 
-    fn visit_for(&mut self, method: &mut ForExpr) -> Self::Result {
-        todo!()
-    }
 }
