@@ -62,7 +62,7 @@ extern {
         "String" => Token::StringType,
         "Boolean"=> Token::BooleanType,
         "Object" => Token::ObjectType,
-        "range"  => Token::Range,
+        //"range"  => Token::Range,
         "protocol" => Token::Protocol,
         "extends"  => Token::Extends,
         "is"     => Token::Is,
@@ -87,11 +87,17 @@ Comma<T>: Vec<T> = {
 
 // Types
 Type: HulkType = {
+    <base:TypeBase> "*" => HulkType::Iterable(Box::new(base)),
+    <base:TypeBase> => base,
+};
+
+// Tipo base sin sufijo
+TypeBase: HulkType = {
     "Number"  => HulkType::Number,
     "String"  => HulkType::String,
     "Boolean" => HulkType::Boolean,
     "Object"  => HulkType::Object,
-    "T" => HulkType::GenericPlaceholder,
+    "T"       => HulkType::GenericPlaceholder,
     <id:"identifier"> => HulkType::UserDefined(id),
 };
 
@@ -489,6 +495,7 @@ WhileExpr: Box<Expr> = {
         }))
     }
 };
+
 ForExpr: Box<Expr> = {
     <start:@L> "for" "(" <var:"identifier"> "in" <iterable:Expr> ")" <body:Expr> <end:@R> => {
         Box::new(Expr::For(ForExpr {
@@ -701,7 +708,8 @@ PostfixExpr: Box<Expr> = {
             }
         }
     },
-    <start:@L> <obj:PostfixExpr> "is" <ty:Type> <end:@R> => {
+    // Usamos TypeBase en is/as para evitar conflictos con el sufijo '*'
+    <start:@L> <obj:PostfixExpr> "is" <ty:TypeBase> <end:@R> => {
         let type_name = match ty {
             HulkType::UserDefined(s) => s,
             _ => panic!("is only works with user-defined types or protocols"),
@@ -713,7 +721,7 @@ PostfixExpr: Box<Expr> = {
             ty: None,
         }))
     },
-    <start:@L> <obj:PostfixExpr> "as" <ty:Type> <end:@R> => {
+    <start:@L> <obj:PostfixExpr> "as" <ty:TypeBase> <end:@R> => {
         let type_name = match ty {
             HulkType::UserDefined(s) => s,
             _ => panic!("as only works with user-defined types or protocols"),
@@ -775,7 +783,7 @@ AtomicExpr: Box<Expr> = {
         }
     },
 
-    <start:@L> "new" <ty:Type> "(" <args:Comma<Expr>> ")" <end:@R> => {
+    <start:@L> "new" <ty:TypeBase> "(" <args:Comma<Expr>> ")" <end:@R> => {
         let type_name = match ty {
             HulkType::UserDefined(s) => s,
             _ => panic!("new solo aplica a tipos definidos por el usuario"),

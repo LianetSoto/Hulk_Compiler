@@ -92,6 +92,7 @@ impl MonomorphizationPass {
             HulkType::Var(id) => format!("Var{}", id),
             HulkType::Error => "Error".to_string(),
             HulkType::GenericPlaceholder => todo!(),
+            HulkType::Iterable(hulk_type) => todo!(),
         }
     }
 
@@ -211,7 +212,7 @@ impl MonomorphizationPass {
             Expr::As(as_expr) => {
                 Self::substitute_in_expr(&mut as_expr.expr, subst);
             }
-        }
+            }
     }
 
     /// This is a core helper for monomorphization: it transforms a generic type

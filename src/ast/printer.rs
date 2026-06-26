@@ -21,6 +21,9 @@ impl PrettyPrinter {
 
     fn type_str(ty: &Option<HulkType>) -> String {
         match ty {
+            Some(HulkType::Iterable(inner)) => {
+                format!(" : {}*", Self::type_str(&Some(*inner.clone())))
+            }
             Some(t) => format!(" : {:?}", t),
             None => String::new(),
         }
