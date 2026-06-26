@@ -1,0 +1,31 @@
+// 1. Definición del protocolo Iterable
+protocol Iterable {
+    next(): Boolean;
+    current(): Object;
+}
+
+// 2. Tipo Range que implementa Iterable
+type Range(min: Number, max: Number) {
+    min = min;
+    max = max;
+    current = min - 1;
+
+    // Método next(): actualiza current y devuelve true si hay más elementos
+    next(): Boolean {
+        self.current := self.current + 1;
+        self.current < max
+    }
+
+    // Método current(): devuelve el valor actual (Number, subtipo de Object)
+    current(): Number => self.current;
+}
+
+// 3. Función global range para crear un Range fácilmente
+function iterable(min: Number, max: Number): Number* => new Range(min, max);
+
+// Itera sobre un Range e imprime los números
+let r : Number* = iterable(1, 6) in {
+    for (x in r) {
+        print(x);   // Imprime 1, 2, 3, 4, 5
+    }
+}
