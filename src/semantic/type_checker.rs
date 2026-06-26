@@ -671,7 +671,7 @@ impl TypeChecker {
             let class_method = match type_info.methods.get(method_name) {
                 Some(m) => m,
                 None => {
-                    // Buscar en la jerarquía de padres (métodos heredados)
+                    // Buscar en padres
                     let mut parent = type_info.parent.clone();
                     let mut found = None;
                     while let Some(pname) = parent {
@@ -687,7 +687,7 @@ impl TypeChecker {
                     }
                     match found {
                         Some(m) => m,
-                        None => return false,
+                        None => return false, // falta un método
                     }
                 }
             };
@@ -778,6 +778,9 @@ impl TypeChecker {
                 }
                 false
             }
+                (HulkType::Iterable(e1), HulkType::Iterable(e2)) => {
+        self.conforms_to(e1, e2)
+    }
             // 8. Un protocolo no conforma a una clase (excepto Object, ya cubierto)
             _ => false,
         }
@@ -1513,7 +1516,6 @@ impl Visitor for TypeChecker {
                 if !self.conforms_to(&end_ty, &HulkType::Number) {
                     self.add_type_error("range end must be Number".to_string(), expr.args[1].span());
                 }
-                // Devolver el tipo interno _Range
                 let ret_ty = HulkType::Class("_Range".to_string());
                 expr.ty = Some(ret_ty.clone());
                 ret_ty
@@ -1542,7 +1544,6 @@ impl Visitor for TypeChecker {
                     let (param_types, ret_ty) = if func_info.is_generic {
                         let mut var_map = HashMap::new();
 
-                        // Función auxiliar para instanciar (clonar) variables genéricas
                         let instantiate = |ty: &HulkType, unifier: &mut Unifier, map: &mut HashMap<usize, HulkType>| -> HulkType {
                             let applied = unifier.apply(ty);
                             if let HulkType::Var(id) = applied {
@@ -1550,7 +1551,6 @@ impl Visitor for TypeChecker {
                                     new_ty.clone()
                                 } else {
                                     let new_var = unifier.new_var();
-                                    // Obtener y clonar las restricciones
                                     if let Some(constraints) = unifier.get_constraints(id) {
                                         let constraints_clone: Vec<Constraint> = constraints.clone();
                                         if let Some(new_id) = new_var.get_var_id() {
@@ -1572,9 +1572,7 @@ impl Visitor for TypeChecker {
                                 let new_params: Vec<HulkType> = orig_params.iter()
                                     .map(|p| instantiate(p, &mut self.unifier, &mut var_map))
                                     .collect();
-
                                 let new_ret = instantiate(orig_ret_var, &mut self.unifier, &mut var_map);
-
                                 (new_params, new_ret)
                             } else {
                                 self.add_type_error(format!("Function '{}' has not been inferred yet", expr.func), expr.span);
@@ -1585,7 +1583,6 @@ impl Visitor for TypeChecker {
                             return HulkType::Error;
                         }
                     } else {
-                        // Para funciones no-genéricas, usar directamente los tipos
                         let param_types = match func_info.param_types {
                             Some(pts) => pts,
                             None => {
@@ -1597,6 +1594,7 @@ impl Visitor for TypeChecker {
                         (param_types, ret)
                     };
 
+                    // Verificar argumentos
                     for (i, (arg, expected)) in expr.args.iter_mut().zip(param_types.iter()).enumerate() {
                         let arg_ty = arg.accept(self);
 
@@ -1618,52 +1616,41 @@ impl Visitor for TypeChecker {
                                     );
                                 }
                                 // Unificar la variable de tipo con el tipo concreto
-                                if let Err(msg) = self.unifier.unify(expected, &arg_ty) {
-                                    self.add_type_error(msg, arg.span());
+                                if let HulkType::Var(_) = expected {
+                                    if let Err(msg) = self.unifier.unify(expected, &arg_ty) {
+                                        self.add_type_error(msg, arg.span());
+                                    }
                                 }
                                 continue;
                             }
                         }
 
                         if let HulkType::Var(id) = expected {
-    if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
-        self.add_type_error(msg, arg.span());
-    }
-    // Verificar restricciones de protocolo
-    if let Some(constraints) = self.unifier.get_constraints(*id) {
-        let constraints_clone = constraints.clone(); // clonar para evitar préstamo
-        for c in constraints_clone {
-            if let Constraint::ConformsToProtocol(proto_name) = c {
-                if let HulkType::Class(class_name) = &arg_ty {
-                    if !self.type_conforms_to_protocol(class_name, &proto_name) {
-                        self.add_type_error(
-                            format!("Type '{}' does not implement protocol '{}'", class_name, proto_name),
-                            arg.span(),
-                        );
-                    }
-                } else {
-                    self.add_type_error(
-                        format!("Expected a class implementing protocol '{}', got {:?}", proto_name, arg_ty),
-                        arg.span(),
-                    );
-                }
-            }
+    // Resolver la variable para ver si ya está ligada
+    let resolved = self.unifier.resolve(expected);
+    if matches!(resolved, HulkType::Var(_)) {
+        // Sigue siendo variable libre: unificar para ligarla
+        if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
+            self.add_type_error(msg, arg.span());
+        }
+    } else {
+        // Ya está ligada: usar conformidad
+        if !self.conforms_to(&arg_ty, &resolved) {
+            self.add_type_error(
+                format!("Argument type {:?} does not conform to expected {:?}", arg_ty, resolved),
+                arg.span(),
+            );
         }
     }
+} else {
+    // expected ya es un tipo concreto: verificar conformidad
+    if !self.conforms_to(&arg_ty, expected) {
+        self.add_type_error(
+            format!("Argument type {:?} does not conform to expected {:?}", arg_ty, expected),
+            arg.span(),
+        );
+    }
 }
-
-                        // Para parámetros normales: verificar conformidad
-                        if !self.conforms_to(&arg_ty, expected) {
-                            self.add_type_error(
-                                format!("Argument type {:?} does not conform to parameter type {:?}", arg_ty, expected),
-                                arg.span(),
-                            );
-                        }
-                        if let HulkType::Var(_) = expected {
-                            if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
-                                self.add_type_error(msg, arg.span());
-                            }
-                        }
                     }
 
                     // Resolver el tipo de retorno después de la unificación
@@ -1892,47 +1879,29 @@ impl Visitor for TypeChecker {
         }
         // Unificar la anotación de retorno (si existe) con la variable de retorno
         // Guardar la anotación de retorno resuelta (si existe)
-        let resolved_ret_ann = if let Some(ret_ann) = &func.ty_annotation {
-            Some(self.resolve_annotation(ret_ann))
-        } else {
-            None
-        };
+        // Guardar la anotación de retorno resuelta (si existe)
+        let resolved_ret_ann = func.ty_annotation.as_ref().map(|ann| self.resolve_annotation(ann));
 
-        // Si hay anotación y NO es Iterable, unificar la anotación con ret_var
+        // Unificar la anotación con la variable de retorno (para todos los casos)
         if let Some(ret_ann) = &resolved_ret_ann {
-            if let HulkType::Iterable(_) = ret_ann {
-                // No unificar aún; lo haremos después de analizar el cuerpo
-            } else {
-                if let Err(msg) = self.unifier.unify(&ret_var, ret_ann) {
-                    self.add_type_error(msg, func.span);
-                }
+            if let Err(msg) = self.unifier.unify(&ret_var, ret_ann) {
+                self.add_type_error(msg, func.span);
             }
         }
 
         // Analizar el cuerpo
         let body_ty = func.body.accept(self);
 
-        // Si hay anotación y es Iterable, verificar conformancia y unificar ret_var con body_ty
+        // Verificar conformidad con la anotación (si existe)
         if let Some(ret_ann) = &resolved_ret_ann {
-            if let HulkType::Iterable(_) = ret_ann {
-                if !self.conforms_to(&body_ty, ret_ann) {
-                    self.add_type_error(
-                        format!("Return type {:?} does not conform to annotated type {:?}", body_ty, ret_ann),
-                        func.span,
-                    );
-                }
-                // Ligar ret_var al tipo real del cuerpo
-                if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
-                    self.add_type_error(msg, func.span);
-                }
-            } else {
-                // Ya unificamos la anotación antes, ahora unificar el cuerpo con ret_var
-                if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
-                    self.add_type_error(msg, func.span);
-                }
+            if !self.conforms_to(&body_ty, ret_ann) {
+                self.add_type_error(
+                    format!("Return type {:?} does not conform to annotated type {:?}", body_ty, ret_ann),
+                    func.span,
+                );
             }
         } else {
-            // Sin anotación, unificar cuerpo con ret_var
+            // Sin anotación, unificar cuerpo con ret_var para inferencia
             if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
                 self.add_type_error(msg, func.span);
             }
@@ -1958,11 +1927,9 @@ impl Visitor for TypeChecker {
             }
         }
 
-        // Unificar el tipo del cuerpo con la variable de retorno (para inferencia)
-        if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
-            self.add_type_error(msg, func.span);
-        }
+       
 
+        // Guardar el tipo de retorno de la función (resuelto después de la unificación)
         // Guardar el tipo de retorno de la función (resuelto después de la unificación)
         func.ty = Some(ret_var.clone());
 
@@ -1980,9 +1947,6 @@ impl Visitor for TypeChecker {
             info.is_generic = is_generic;
             info.param_annotations = func.params.iter().map(|p| p.ty_annotation.clone()).collect();
         }
-
-        // (Opcional) Ya no necesitas el segundo bucle, porque las anotaciones ya se unificaron.
-        // Pero si quieres mantenerlo para otros propósitos, puedes dejarlo vacío.
 
         self.exit_scope();
         ret_var
