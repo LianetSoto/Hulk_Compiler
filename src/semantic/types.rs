@@ -10,6 +10,7 @@ pub enum HulkType {
     Class(String),
     Protocol(String),
     GenericPlaceholder,
+    Iterable(Box<HulkType>), 
 }
 
 impl HulkType {
