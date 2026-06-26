@@ -1360,19 +1360,50 @@ impl TypeChecker {
         self.iterable_implementations.get(elem_ty).cloned()
     }
 
-    fn replace_iterable_with_concrete(&mut self, ty: &HulkType) -> HulkType {
-        match ty {
-            HulkType::Iterable(elem_ty) => {
-                if let Some(class_name) = self.get_concrete_iterable_class(elem_ty) {
-                    HulkType::Class(class_name)
-                } else {
-                    let proto_name = self.get_or_create_iterable_protocol(elem_ty);
-                    HulkType::Protocol(proto_name)
-                }
-            }
-            _ => ty.clone(),
+    /// Busca una clase concreta que implemente el protocolo dado.
+/// Retorna Some(clase) si exactamente una clase lo implementa, None en caso contrario.
+fn get_concrete_class_for_protocol(&self, proto_name: &str) -> Option<String> {
+    let mut candidates = Vec::new();
+    for (class_name, _) in &self.types {
+        if class_name == "Object" {
+            continue;
+        }
+        if self.type_conforms_to_protocol(class_name, proto_name) {
+            candidates.push(class_name.clone());
         }
     }
+    if candidates.len() == 1 {
+        Some(candidates[0].clone())
+    } else {
+        None
+    }
+}
+
+    fn replace_iterable_with_concrete(&mut self, ty: &HulkType) -> HulkType {
+    match ty {
+        HulkType::Iterable(elem_ty) => {
+            if let Some(class_name) = self.get_concrete_iterable_class(elem_ty) {
+                HulkType::Class(class_name)
+            } else {
+                let proto_name = self.get_or_create_iterable_protocol(elem_ty);
+                HulkType::Protocol(proto_name)
+            }
+        }
+        HulkType::Protocol(name) => {
+            // No convertir los built-ins Iterable y Enumerable
+            if name == "Iterable" || name == "Enumerable" {
+                ty.clone()
+            } else if let Some(class_name) = self.get_concrete_class_for_protocol(name) {
+                // Si hay exactamente una clase que implementa este protocolo, usarla
+                HulkType::Class(class_name)
+            } else {
+                // Si hay múltiples o ninguna, mantener el protocolo
+                ty.clone()
+            }
+        }
+        _ => ty.clone(),
+    }
+}
 
     fn get_or_create_iterable_protocol(&mut self, elem_ty: &HulkType) -> String {
         let name = match elem_ty {
@@ -1935,22 +1966,36 @@ impl Visitor for TypeChecker {
         self.enter_scope();
 
         for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
-            let concrete_ty = if let Some(ann) = &param.ty_annotation {
-                let resolved_ann = self.resolve_annotation(ann);
-                // Unificar la variable de tipo con la anotación para inferencia
-                if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
-                    self.add_type_error(msg, param.span);
+    if let Some(ann) = &param.ty_annotation {
+        let resolved_ann = self.resolve_annotation(ann);
+        // Caso especial: protocolos de usuario (no Iterable ni Enumerable)
+        if let HulkType::Protocol(proto_name) = &resolved_ann {
+            if proto_name != "Iterable" && proto_name != "Enumerable" {
+                // Protocolo definido por el usuario: guardamos la variable de tipo
+                // y añadimos restricción para que el unificador la resuelva.
+                param.ty = Some(var_ty.clone());
+                self.declare_var(param.name.clone(), var_ty.clone());
+                if let HulkType::Var(id) = var_ty {
+                    self.unifier.add_constraint(*id, Constraint::ConformsToProtocol(proto_name.clone()));
                 }
-                // Convertir la anotación a tipo concreto (Class o Protocol)
-                self.replace_iterable_with_concrete(&resolved_ann)
-            } else {
-                // Sin anotación: usar la variable de tipo (se resolverá después)
-                var_ty.clone()
-            };
-            // Guardar el tipo concreto en el AST del parámetro y en el ámbito
-            param.ty = Some(concrete_ty.clone());
-            self.declare_var(param.name.clone(), concrete_ty);
+                continue; // Saltamos la unificación y conversión para este caso
+            }
         }
+        // Para tipos concretos (incluyendo Iterable, Enumerable, Class, Number, etc.)
+        // Unificamos la variable de tipo con la anotación para inferencia.
+        if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+            self.add_type_error(msg, param.span);
+        }
+        // Convertimos la anotación a tipo concreto (por ejemplo, Iterable(Number) -> Class("Squares"))
+        let concrete_ty = self.replace_iterable_with_concrete(&resolved_ann);
+        param.ty = Some(concrete_ty.clone());
+        self.declare_var(param.name.clone(), concrete_ty);
+    } else {
+        // Sin anotación: usamos la variable de tipo
+        param.ty = Some(var_ty.clone());
+        self.declare_var(param.name.clone(), var_ty.clone());
+    }
+}
         // Unificar la anotación de retorno (si existe) con la variable de retorno
         // Guardar la anotación de retorno resuelta (si existe)
         // Guardar la anotación de retorno resuelta (si existe)
