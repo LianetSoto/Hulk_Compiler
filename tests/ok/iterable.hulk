@@ -1,27 +1,25 @@
-
-
-// 2. Tipo Range que implementa Iterable
+// Range type that implements the Iterable protocol
 type Range(min: Number, max: Number) {
     min = min;
     max = max;
     current = min - 1;
 
-    // Método next(): actualiza current y devuelve true si hay más elementos
+    // next() method: updates current and returns true if more elements remain
     next(): Boolean {
         self.current := self.current + 1;
         self.current < self.max
     }
 
-    // Método current(): devuelve el valor actual (Number, subtipo de Object)
+    // current() method: returns the current value (Number, a subtype of Object)
     current(): Number => self.current;
 }
 
-// 3. Función global range para crear un Range fácilmente
+// Global function to easily create a Range instance
 function iterable(min: Number, max: Number): Number* => new Range(min, max);
 
-// Itera sobre un Range e imprime los números
+// Iterate over a Range and print the numbers
 let r : Number* = iterable(1, 6) in {
     for (x in r) {
-        print(x);   // Imprime 1, 2, 3, 4, 5
+        print(x);   // Prints 1, 2, 3, 4, 5
     }
 }

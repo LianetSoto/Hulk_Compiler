@@ -1,0 +1,26 @@
+// Type that implements the Enumerable protocol.
+// It stores a range and returns a fresh Iterable every time iter() is called.
+type MyRange(start, end) {
+    start = start;
+    end = end;
+
+    // Creates a new iterable that traverses from start to end
+    iter(): Iterable => range(self.start, self.end);
+}
+
+// Helper function to build a MyRange instance
+function myRange(s, e) => new MyRange(s, e);
+
+// Main program
+{
+    let col = myRange(10, 13) in {
+        print("First traversal:");
+        for (x in col) print(x);
+
+        print("Second traversal:");
+        for (x in col) print(x);
+
+        print("Third traversal with another Enumerable:");
+        for (x in myRange(100, 102)) print(x);
+    }
+}
