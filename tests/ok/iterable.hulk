@@ -1,8 +1,4 @@
-// 1. Definición del protocolo Iterable
-protocol Iterable {
-    next(): Boolean;
-    current(): Object;
-}
+
 
 // 2. Tipo Range que implementa Iterable
 type Range(min: Number, max: Number) {
