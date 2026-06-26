@@ -71,6 +71,7 @@ pub struct TypeChecker {
     protocols: HashMap<String, ProtocolInfo>,
     current_method_params: Option<Vec<HulkType>>,
     next_type_id: u32,
+    iterable_implementations: HashMap<HulkType, String>,
 }
 
 impl TypeChecker {
@@ -93,6 +94,7 @@ impl TypeChecker {
             protocols: HashMap::new(),
             current_method_params: None,
             next_type_id: 0,
+            iterable_implementations: HashMap::new(),
         };
         tc.register_builtin_types();
         tc
@@ -145,6 +147,34 @@ impl TypeChecker {
                 methods: vec![],
                 span: Span::new(0, 0),
                 ty: None,
+            });
+        }
+
+        if !self.protocols.contains_key("Iterable") {
+            let mut methods = HashMap::new();
+            methods.insert("next".to_string(), MethodInfo {
+                param_types: vec![],
+                return_type: HulkType::Boolean,
+            });
+            methods.insert("current".to_string(), MethodInfo {
+                param_types: vec![],
+                return_type: HulkType::Object,
+            });
+            self.protocols.insert("Iterable".to_string(), ProtocolInfo {
+                methods,
+                extends: None,
+            });
+        }
+
+        if !self.protocols.contains_key("Enumerable") {
+            let mut methods = HashMap::new();
+            methods.insert("iter".to_string(), MethodInfo {
+                param_types: vec![],
+                return_type: HulkType::Iterable(Box::new(HulkType::Object)), // placeholder genérico
+            });
+            self.protocols.insert("Enumerable".to_string(), ProtocolInfo {
+                methods,
+                extends: None,
             });
         }
     }
@@ -382,7 +412,8 @@ impl TypeChecker {
                     attr.ty = Some(self.resolve_and_normalize(ty));
                 }
                 if let Some(ann) = &attr.ty_annotation {
-                    attr.ty_annotation = Some(self.unifier.resolve(ann));
+                    let resolved = self.unifier.resolve(ann);
+                    attr.ty_annotation = Some(self.replace_iterable_with_concrete(&resolved));
                 }
                 resolve_expr(&self.unifier, &mut attr.init_expr);
             }
@@ -395,8 +426,9 @@ impl TypeChecker {
                         param.ty = Some(self.resolve_and_normalize(ty));
                     }
                     if let Some(ann) = &param.ty_annotation {
-                        param.ty_annotation = Some(self.unifier.resolve(ann));
-                    }
+                    let resolved = self.unifier.resolve(ann);
+                    param.ty_annotation = Some(self.replace_iterable_with_concrete(&resolved));
+                }
                 }
                 // Actualizar MethodInfo en self.types con los tipos resueltos
                 if let Some(type_info) = self.types.get_mut(&type_def.name) {
@@ -779,8 +811,8 @@ impl TypeChecker {
                 false
             }
                 (HulkType::Iterable(e1), HulkType::Iterable(e2)) => {
-        self.conforms_to(e1, e2)
-    }
+            self.conforms_to(e1, e2)
+        }
             // 8. Un protocolo no conforma a una clase (excepto Object, ya cubierto)
             _ => false,
         }
@@ -1077,10 +1109,10 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_and_normalize(&self, ty: &HulkType) -> HulkType {
-        self.unifier.resolve(ty) // solo resuelve, no convierte
+    fn resolve_and_normalize(&mut self, ty: &HulkType) -> HulkType {
+        let resolved = self.unifier.resolve(ty);
+        self.replace_iterable_with_concrete(&resolved)
     }
-
     fn resolve_type_for_flatten(unifier: &Unifier, ty: &HulkType) -> HulkType {
         let resolved = unifier.resolve(ty);
         match resolved {
@@ -1324,6 +1356,50 @@ impl TypeChecker {
         program.types.insert(0, range_typedef);
     }
 
+    pub fn get_concrete_iterable_class(&self, elem_ty: &HulkType) -> Option<String> {
+        self.iterable_implementations.get(elem_ty).cloned()
+    }
+
+    fn replace_iterable_with_concrete(&mut self, ty: &HulkType) -> HulkType {
+        match ty {
+            HulkType::Iterable(elem_ty) => {
+                if let Some(class_name) = self.get_concrete_iterable_class(elem_ty) {
+                    HulkType::Class(class_name)
+                } else {
+                    let proto_name = self.get_or_create_iterable_protocol(elem_ty);
+                    HulkType::Protocol(proto_name)
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    fn get_or_create_iterable_protocol(&mut self, elem_ty: &HulkType) -> String {
+        let name = match elem_ty {
+            HulkType::Number => "Iterable_Number".to_string(),
+            HulkType::String => "Iterable_String".to_string(),
+            HulkType::Boolean => "Iterable_Boolean".to_string(),
+            HulkType::Class(c) => format!("Iterable_{}", c),
+            HulkType::Protocol(p) => format!("Iterable_{}", p),
+            // Para otros casos, usar un nombre genérico
+            _ => format!("Iterable_{:?}", elem_ty),
+        };
+
+        if !self.protocols.contains_key(&name) {
+            let mut methods = HashMap::new();
+            methods.insert("current".to_string(), MethodInfo {
+                param_types: vec![],
+                return_type: elem_ty.clone(),
+            });
+            // El método `next` se hereda de Iterable, no hace falta definirlo
+            self.protocols.insert(name.clone(), ProtocolInfo {
+                methods,
+                extends: Some("Iterable".to_string()),
+            });
+        }
+
+        name
+    }
     
 }
 
@@ -1446,7 +1522,7 @@ impl Visitor for TypeChecker {
         }
 
         let final_ty = self.unifier.resolve(&result_var);
-        expr.ty = Some(final_ty.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&result_var));
         final_ty
     }
 
@@ -1625,38 +1701,39 @@ impl Visitor for TypeChecker {
                             }
                         }
 
-                        if let HulkType::Var(id) = expected {
-    // Resolver la variable para ver si ya está ligada
-    let resolved = self.unifier.resolve(expected);
-    if matches!(resolved, HulkType::Var(_)) {
-        // Sigue siendo variable libre: unificar para ligarla
-        if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
-            self.add_type_error(msg, arg.span());
-        }
-    } else {
-        // Ya está ligada: usar conformidad
-        if !self.conforms_to(&arg_ty, &resolved) {
-            self.add_type_error(
-                format!("Argument type {:?} does not conform to expected {:?}", arg_ty, resolved),
-                arg.span(),
-            );
-        }
-    }
-} else {
-    // expected ya es un tipo concreto: verificar conformidad
-    if !self.conforms_to(&arg_ty, expected) {
-        self.add_type_error(
-            format!("Argument type {:?} does not conform to expected {:?}", arg_ty, expected),
-            arg.span(),
-        );
-    }
-}
+                                            if let HulkType::Var(id) = expected {
+                        // Resolver la variable para ver si ya está ligada
+                        let resolved = self.unifier.resolve(expected);
+                        if matches!(resolved, HulkType::Var(_)) {
+                            // Sigue siendo variable libre: unificar para ligarla
+                            if let Err(msg) = self.unifier.unify(&arg_ty, expected) {
+                                self.add_type_error(msg, arg.span());
+                            }
+                        } else {
+                            // Ya está ligada: usar conformidad
+                            if !self.conforms_to(&arg_ty, &resolved) {
+                                self.add_type_error(
+                                    format!("Argument type {:?} does not conform to expected {:?}", arg_ty, resolved),
+                                    arg.span(),
+                                );
+                            }
+                        }
+                    } else {
+                        // expected ya es un tipo concreto: verificar conformidad
+                        if !self.conforms_to(&arg_ty, expected) {
+                            self.add_type_error(
+                                format!("Argument type {:?} does not conform to expected {:?}", arg_ty, expected),
+                                arg.span(),
+                            );
+                        }
+                    }
                     }
 
                     // Resolver el tipo de retorno después de la unificación
                     let applied_ret_ty = self.unifier.apply(&ret_ty);
-                    expr.ty = Some(applied_ret_ty.clone());
-                    applied_ret_ty
+                    let concrete_ret = self.replace_iterable_with_concrete(&applied_ret_ty);
+                    expr.ty = Some(concrete_ret.clone());
+                    concrete_ret
                 } else {
                     self.add_type_error(format!("Unknown function '{}'", expr.func), expr.span);
                     HulkType::Error
@@ -1695,7 +1772,7 @@ impl Visitor for TypeChecker {
         }
 
         let final_ty = self.unifier.resolve(&result_var);
-        expr.ty = Some(final_ty.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&result_var));
         final_ty
     }
 
@@ -1724,6 +1801,8 @@ impl Visitor for TypeChecker {
             let mut var_ty = init_ty.clone();
             if let Some(ann_ty) = ann {
                 let resolved_ann = self.resolve_annotation(ann_ty);
+                let concrete_ann = self.replace_iterable_with_concrete(&resolved_ann);
+                *ann = Some(concrete_ann.clone()); 
                 if !self.conforms_to(&init_ty, &resolved_ann) {
                     self.add_type_error(
                         format!("Cannot initialize variable of type {:?} with value of type {:?}", resolved_ann, init_ty),
@@ -1757,11 +1836,12 @@ impl Visitor for TypeChecker {
             } else {
                 var_ty = self.unifier.resolve(&init_ty);
             }
+            var_ty = self.replace_iterable_with_concrete(&var_ty);
             self.declare_var(name.clone(), var_ty);
         }
         let body_ty = expr.body.accept(self);
         self.exit_scope();
-        expr.ty = Some(body_ty.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&body_ty));
         body_ty
     }
 
@@ -1810,7 +1890,7 @@ impl Visitor for TypeChecker {
         for e in &mut expr.expressions {
             last_ty = e.accept(self);
         }
-        expr.ty = Some(last_ty.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&last_ty));
         last_ty
     }
 
@@ -1832,7 +1912,7 @@ impl Visitor for TypeChecker {
                 HulkType::Object // fallback
             }
         };
-        expr.ty = Some(result_ty.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&result_ty));
         result_ty
     }
 
@@ -1855,27 +1935,21 @@ impl Visitor for TypeChecker {
         self.enter_scope();
 
         for (param, var_ty) in func.params.iter_mut().zip(param_vars.iter()) {
-            if let Some(ann) = &param.ty_annotation {
+            let concrete_ty = if let Some(ann) = &param.ty_annotation {
                 let resolved_ann = self.resolve_annotation(ann);
-                if let HulkType::Protocol(proto_name) = &resolved_ann {
-                    // Es un protocolo: usar la variable de tipo
-                    param.ty = Some(var_ty.clone());
-                    self.declare_var(param.name.clone(), var_ty.clone());
-                    if let HulkType::Var(id) = var_ty {
-                        self.unifier.add_constraint(*id, Constraint::ConformsToProtocol(proto_name.clone()));
-                    }
-                } else {
-                    // Tipo concreto: unificar normalmente
-                    if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
-                        self.add_type_error(msg, param.span);
-                    }
-                    param.ty = Some(resolved_ann.clone());
-                    self.declare_var(param.name.clone(), resolved_ann);
+                // Unificar la variable de tipo con la anotación para inferencia
+                if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
+                    self.add_type_error(msg, param.span);
                 }
+                // Convertir la anotación a tipo concreto (Class o Protocol)
+                self.replace_iterable_with_concrete(&resolved_ann)
             } else {
-                param.ty = Some(var_ty.clone());
-                self.declare_var(param.name.clone(), var_ty.clone());
-            }
+                // Sin anotación: usar la variable de tipo (se resolverá después)
+                var_ty.clone()
+            };
+            // Guardar el tipo concreto en el AST del parámetro y en el ámbito
+            param.ty = Some(concrete_ty.clone());
+            self.declare_var(param.name.clone(), concrete_ty);
         }
         // Unificar la anotación de retorno (si existe) con la variable de retorno
         // Guardar la anotación de retorno resuelta (si existe)
@@ -1887,6 +1961,10 @@ impl Visitor for TypeChecker {
             if let Err(msg) = self.unifier.unify(&ret_var, ret_ann) {
                 self.add_type_error(msg, func.span);
             }
+        }
+        if let Some(ret_ann) = &func.ty_annotation {
+            let concrete_ann = self.replace_iterable_with_concrete(&self.resolve_annotation(ret_ann));
+            func.ty_annotation = Some(concrete_ann);
         }
 
         // Analizar el cuerpo
@@ -1930,8 +2008,7 @@ impl Visitor for TypeChecker {
        
 
         // Guardar el tipo de retorno de la función (resuelto después de la unificación)
-        // Guardar el tipo de retorno de la función (resuelto después de la unificación)
-        func.ty = Some(ret_var.clone());
+        func.ty = Some(self.replace_iterable_with_concrete(&ret_var));
 
         // Calcular si la función es genérica
         let is_generic = param_vars.iter().any(|t| {
@@ -2079,12 +2156,45 @@ impl Visitor for TypeChecker {
         }
         self.current_type = None;
 
+        // Unificar parámetros con atributos del mismo nombre
+        // Recoger los tipos de atributos en un Vec para no mantener el préstamo de self.types
+        let attr_types: Vec<(String, HulkType)> = if let Some(type_info) = self.types.get(&type_def.name) {
+            type_def.params.iter()
+                .filter_map(|param_name| {
+                    type_info.attributes.get(param_name).map(|attr_ty| (param_name.clone(), attr_ty.clone()))
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
+        for (param_name, attr_ty) in attr_types {
+            if let Some(pos) = type_def.params.iter().position(|p| p == &param_name) {
+                if let Some(var_ty) = param_vars.get(pos) {
+                    if let Err(msg) = self.unifier.unify(var_ty, &attr_ty) {
+                        self.add_type_error(msg, type_def.span);
+                    }
+                }
+            }
+        }
+
         // Resolver los tipos de los parámetros formales
         let resolved_param_types: Vec<HulkType> = param_vars.iter()
-        .map(|v| self.unifier.resolve(v))
-        .collect();
+            .map(|v| self.unifier.resolve(v))
+            .collect();
 
-        type_def.param_types = resolved_param_types;
+        type_def.param_types = param_vars.iter()
+            .map(|v| self.replace_iterable_with_concrete(&self.unifier.resolve(v)))
+            .collect();
+
+        // Usar type_info.methods (que incluye los heredados) en lugar de type_def.methods
+        let type_info = self.types.get(&type_def.name).unwrap();
+        if type_info.methods.contains_key("next") && type_info.methods.contains_key("current") {
+            if let Some(method) = type_info.methods.get("current") {
+                let elem_ty = self.unifier.resolve(&method.return_type);
+                self.iterable_implementations.insert(elem_ty, type_def.name.clone());
+            }
+        }
 
         HulkType::Object
     }
@@ -2099,8 +2209,7 @@ impl Visitor for TypeChecker {
             }
         }
         let final_ty = self.resolve_and_normalize(&init_ty);
-        attr.ty = Some(final_ty.clone());
-
+        attr.ty = Some(self.replace_iterable_with_concrete(&final_ty));
         if let Some(type_name) = &self.current_type {
             if let Some(type_info) = self.types.get_mut(type_name) {
                 if !type_info.attributes.contains_key(&attr.name) {
@@ -2120,12 +2229,17 @@ impl Visitor for TypeChecker {
         let self_ty = HulkType::Class(current_type_name.clone());
         self.declare_var("self".to_string(), self_ty.clone());
 
+        // Variables de tipo para parámetros y retorno
         let param_vars: Vec<HulkType> = (0..method.params.len())
             .map(|_| self.unifier.new_var())
             .collect();
         let ret_var = self.unifier.new_var();
         self.current_method_params = Some(param_vars.clone());
 
+        // Resolver la anotación de retorno (si existe) usando resolve_annotation
+        let resolved_ret_ann = method.ty_annotation.as_ref().map(|ann| self.resolve_annotation(ann));
+
+        // Crear MethodInfo temporal (se actualizará después con tipos concretos)
         let method_info = MethodInfo {
             param_types: param_vars.clone(),
             return_type: ret_var.clone(),
@@ -2136,53 +2250,89 @@ impl Visitor for TypeChecker {
             }
         }
 
+        // Procesar parámetros
         for (param, var_ty) in method.params.iter_mut().zip(param_vars.iter()) {
             if let Some(ann) = &param.ty_annotation {
-                let resolved_ann = match ann {
-                    HulkType::UserDefined(name) => HulkType::Class(name.clone()),
-                    _ => ann.clone(),
-                };
+                // Usar resolve_annotation para convertir UserDefined a Class/Protocol
+                let resolved_ann = self.resolve_annotation(ann);
+                // Unificar la variable de tipo con la anotación para inferencia
                 if let Err(msg) = self.unifier.unify(var_ty, &resolved_ann) {
                     self.add_type_error(msg, param.span);
                 }
+                // Obtener el tipo concreto (convertir Iterable si es posible)
+                let concrete_param = self.replace_iterable_with_concrete(&resolved_ann);
+                param.ty = Some(concrete_param.clone());
+                self.declare_var(param.name.clone(), concrete_param);
+            } else {
+                // Sin anotación: usar la variable de tipo (se resolverá después)
+                let concrete_param = self.replace_iterable_with_concrete(var_ty);
+                param.ty = Some(concrete_param.clone());
+                self.declare_var(param.name.clone(), var_ty.clone());
             }
-            param.ty = Some(var_ty.clone());
-            self.declare_var(param.name.clone(), var_ty.clone());
         }
 
-        if let Some(ret_ann) = &method.ty_annotation {
-            let resolved_ret_ann = match ret_ann {
-                HulkType::UserDefined(name) => HulkType::Class(name.clone()),
-                _ => ret_ann.clone(),
-            };
-            if let Err(msg) = self.unifier.unify(&ret_var, &resolved_ret_ann) {
+        // Analizar el cuerpo del método
+        let body_ty = method.body.accept(self);
+
+        // Verificar conformidad con la anotación de retorno (si existe)
+        if let Some(ret_ann) = &resolved_ret_ann {
+            // 1. Verificar que el tipo del cuerpo conforma a la anotación
+            if !self.conforms_to(&body_ty, ret_ann) {
+                self.add_type_error(
+                    format!("Return type {:?} does not conform to annotated type {:?}", body_ty, ret_ann),
+                    method.span,
+                );
+                // En caso de error, asignar la anotación como fallback
+                let concrete_ann = self.replace_iterable_with_concrete(ret_ann);
+                method.ty_annotation = Some(concrete_ann.clone());
+                method.ty = Some(concrete_ann);
+            } else {
+                // Usar el tipo concreto del cuerpo para el método (más específico)
+                let concrete_body = self.replace_iterable_with_concrete(&body_ty);
+                let concrete_ann = self.replace_iterable_with_concrete(ret_ann);
+                method.ty_annotation = Some(concrete_ann.clone()); // clonar para la anotación
+                // El tipo del método será el tipo concreto del cuerpo si es una clase o protocolo concreto,
+                // o la anotación si el cuerpo sigue siendo Iterable (no se pudo convertir)
+                if matches!(concrete_body, HulkType::Iterable(_)) {
+                    method.ty = Some(concrete_ann); // mover, ya que no se usará después
+                } else {
+                    method.ty = Some(concrete_body);
+                }
+            }
+        } else {
+            // Sin anotación: unificar el cuerpo con la variable de retorno para inferencia
+            if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
                 self.add_type_error(msg, method.span);
             }
+            // Resolver la variable de retorno y convertir Iterable si es posible
+            let resolved_ret = self.unifier.resolve(&ret_var);
+            let concrete_ret = self.replace_iterable_with_concrete(&resolved_ret);
+            method.ty = Some(concrete_ret);
         }
 
-        let body_ty = method.body.accept(self);
-        if let Err(msg) = self.unifier.unify(&body_ty, &ret_var) {
-            self.add_type_error(msg, method.span);
-        }
-
+        // Resolver tipos concretos de los parámetros para actualizar MethodInfo
         let resolved_params: Vec<HulkType> = param_vars.iter()
             .map(|v| self.unifier.resolve(v))
             .collect();
-        let resolved_ret = self.unifier.resolve(&ret_var);
-        method.ty = Some(resolved_ret.clone());
+        // El tipo de retorno concreto es el que se asignó a method.ty
+        let resolved_ret = method.ty.as_ref().unwrap().clone();
 
+        // Actualizar MethodInfo en self.types con los tipos concretos
         if let Some(type_name) = &self.current_type {
             if let Some(type_info) = self.types.get_mut(type_name) {
                 if let Some(m_info) = type_info.methods.get_mut(&method.name) {
                     m_info.param_types = resolved_params;
-                    m_info.return_type = resolved_ret.clone();
+                    m_info.return_type = resolved_ret;
                 }
             }
         }
+
         self.current_method = None;
         self.current_method_params = None;
         self.exit_scope();
-        resolved_ret
+
+        // Devolver el tipo de retorno concreto
+        method.ty.as_ref().unwrap().clone()
     }
         
     fn visit_new(&mut self, expr: &mut NewExpr) -> Self::Result {
@@ -2305,7 +2455,7 @@ impl Visitor for TypeChecker {
 
         let ret_ty = method_info.return_type.clone();
         let applied_ret_ty = self.unifier.apply(&ret_ty);
-        expr.ty = Some(applied_ret_ty.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&applied_ret_ty));
         applied_ret_ty
     }
 
@@ -2533,8 +2683,7 @@ impl Visitor for TypeChecker {
 
         // 5. Asignar tipo de retorno y guardar información para codegen
         let ret_ty = self.unifier.resolve(&parent_ret_type);
-        expr.ty = Some(ret_ty.clone());
-        expr.base_type = Some(parent_name.clone());
+        expr.ty = Some(self.replace_iterable_with_concrete(&ret_ty));        expr.base_type = Some(parent_name.clone());
         expr.method_name = Some(method_name.clone());
 
         ret_ty
@@ -2599,50 +2748,65 @@ impl Visitor for TypeChecker {
     }
 
     fn visit_for(&mut self, expr: &mut ForExpr) -> Self::Result {
-    let iterable_ty = expr.iterable.accept(self);
+        // 1. Obtener el tipo del iterable
+        let mut iterable_ty = expr.iterable.accept(self);
 
-    // Verificar que el iterable sea una clase que tenga next() y current()
-    let elem_ty = match &iterable_ty {
-        HulkType::Class(class_name) => {
-            let type_info = match self.types.get(class_name) {
-                Some(info) => info,
-                None => {
+        // 2. Si el iterable conforma a Enumerable, reescribir a iter()
+        if self.conforms_to(&iterable_ty, &HulkType::Protocol("Enumerable".to_string())) {
+            // Crear la llamada a método: iterable.iter()
+            let iter_call = Expr::MethodCall(MethodCallExpr {
+                object: expr.iterable.clone(),
+                method: "iter".to_string(),
+                args: vec![],
+                span: expr.span,
+                ty: None,
+            });
+            expr.iterable = Box::new(iter_call);
+            // Reanalizar el nuevo iterable para obtener su tipo
+            iterable_ty = expr.iterable.accept(self);
+        }
+
+        // 3. Ahora iterable_ty debería ser Class (o Iterable que luego convertimos)
+        let elem_ty = match &iterable_ty {
+            HulkType::Class(class_name) => {
+                let type_info = match self.types.get(class_name) {
+                    Some(info) => info,
+                    None => {
+                        self.add_type_error(
+                            format!("Type '{}' not found", class_name),
+                            expr.iterable.span(),
+                        );
+                        return HulkType::Error;
+                    }
+                };
+                if !type_info.methods.contains_key("next") || !type_info.methods.contains_key("current") {
                     self.add_type_error(
-                        format!("Type '{}' not found", class_name),
+                        format!("Type '{}' does not implement the iterable protocol (missing next() or current())", class_name),
                         expr.iterable.span(),
                     );
                     return HulkType::Error;
                 }
-            };
-            if !type_info.methods.contains_key("next") || !type_info.methods.contains_key("current") {
+                type_info.methods.get("current")
+                    .map(|m| self.unifier.resolve(&m.return_type))
+                    .unwrap_or(HulkType::Object)
+            }
+            _ => {
                 self.add_type_error(
-                    format!("Type '{}' does not implement the iterable protocol (missing next() or current())", class_name),
+                    format!("Expected an iterable class, got {:?}", iterable_ty),
                     expr.iterable.span(),
                 );
                 return HulkType::Error;
             }
-            // Inferir el tipo del elemento desde el método current()
-            type_info.methods.get("current")
-                .map(|m| self.unifier.resolve(&m.return_type))
-                .unwrap_or(HulkType::Object)
-        }
-        HulkType::Iterable(inner) => *inner.clone(), // para T* (opcional)
-        _ => {
-            self.add_type_error(
-                format!("Expected an iterable (class with next() and current()), got {:?}", iterable_ty),
-                expr.iterable.span(),
-            );
-            return HulkType::Error;
-        }
-    };
+        };
 
-    self.enter_scope();
-    self.declare_var(expr.var.clone(), elem_ty);
-    let body_ty = expr.body.accept(self);
-    self.exit_scope();
+        // 4. Ámbito para la variable del bucle
+        self.enter_scope();
+        self.declare_var(expr.var.clone(), elem_ty);
+        let body_ty = expr.body.accept(self);
+        self.exit_scope();
 
-    expr.ty = Some(body_ty.clone());
-    body_ty
-}
+        expr.ty = Some(body_ty.clone());
+        body_ty
+    }
 
 }
