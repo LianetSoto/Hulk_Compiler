@@ -1,6 +1,6 @@
 // Type that implements the Enumerable protocol.
 // It stores a range and returns a fresh Iterable every time iter() is called.
-type MyRange(start, end) {
+type MyRange(start: Number, end: Number) {
     start = start;
     end = end;
 
