@@ -212,6 +212,9 @@ impl MonomorphizationPass {
             Expr::As(as_expr) => {
                 Self::substitute_in_expr(&mut as_expr.expr, subst);
             }
+            Expr::For(for_expr) => {
+               
+            }
             }
     }
 

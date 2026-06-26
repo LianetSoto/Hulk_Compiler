@@ -108,4 +108,6 @@ impl Visitor for BaseDetector {
     fn visit_protocol_method(&mut self, _: &mut ProtocolMethod) -> Self::Result {}
     fn visit_is(&mut self, _: &mut IsExpr) -> Self::Result {}
     fn visit_as(&mut self, _: &mut AsExpr) -> Self::Result {}
+    fn visit_for(&mut self, _: &mut ForExpr) -> Self::Result {}
+
 }
